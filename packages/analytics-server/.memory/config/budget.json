@@ -1,0 +1,12 @@
+{
+  "daily_limit_usd": 2,
+  "weekly_limit_usd": 10,
+  "monthly_limit_usd": 30,
+  "alert_threshold": 0.8,
+  "costs": {
+    "antigravity_input": 0.015,
+    "antigravity_output": 0.075,
+    "copilot": 0
+  },
+  "emergency_override": false
+}
