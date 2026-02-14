@@ -1,0 +1,21 @@
+{
+  "name": "@antigravity-os/analytics-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for cost tracking, performance analytics, and budget enforcement",
+  "bin": {
+    "antigravity-analytics": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}
