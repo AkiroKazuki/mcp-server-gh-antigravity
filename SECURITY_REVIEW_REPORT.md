@@ -30,8 +30,11 @@ The `.memory/` directory contains user-generated content, configuration files (l
 **Fix Applied**:
 - Added `.memory/` to `.gitignore`
 - Added `.skills/` to `.gitignore` (similar risk)
-- Removed existing `.memory/config/budget.json` from git history
+- **COMPLETE GIT HISTORY REWRITE**: Used `git filter-branch` to permanently remove ALL `.memory/` files from entire repository history
+- Removed existing `.memory/config/budget.json` from all commits
 - Updated README with security warnings
+
+**⚠️ IMPORTANT**: Git history was rewritten. All commit hashes have changed. See [GIT_HISTORY_CLEANUP.md](GIT_HISTORY_CLEANUP.md) for details.
 
 ---
 
@@ -50,8 +53,11 @@ All compiled JavaScript files in `packages/*/build/` directories were being comm
 
 **Fix Applied**:
 - Added `build/`, `dist/`, and `*.tsbuildinfo` to `.gitignore`
-- Removed all existing build artifacts from git (18 files)
+- **COMPLETE GIT HISTORY REWRITE**: Used `git filter-branch` to permanently remove ALL `build/` artifacts from entire repository history
+- Removed all existing build artifacts from all commits (18 files)
 - Build process verified to work correctly
+
+**⚠️ IMPORTANT**: Git history was rewritten. All commit hashes have changed. See [GIT_HISTORY_CLEANUP.md](GIT_HISTORY_CLEANUP.md) for details.
 
 ---
 
@@ -161,6 +167,7 @@ See [SECURITY.md](SECURITY.md) for the complete list. Key highlights:
 Modified:
   .gitignore (added build/, .memory/, .skills/)
   README.md (added security section)
+  SECURITY_REVIEW_REPORT.md (updated with history cleanup notes)
   package.json (added repository metadata)
   packages/analytics-server/package.json (added license/repo)
   packages/copilot-server/package.json (added license/repo)
@@ -170,14 +177,16 @@ Created:
   LICENSE (MIT License)
   CONTRIBUTING.md (contribution guidelines)
   SECURITY.md (comprehensive security documentation)
+  GIT_HISTORY_CLEANUP.md (git history rewrite documentation)
 
-Deleted:
+Deleted from ALL git history:
   .memory/config/budget.json
+  packages/analytics-server/.memory/config/budget.json
   packages/*/build/*.js (18 files)
   packages/*/build/*.d.ts (18 files)
 ```
 
-**Total Impact**: 28 files changed, 371 insertions(+), 2,778 deletions(-)
+**Git History Rewritten**: All commit hashes changed. Repository went from 5 commits to 4 commits after removing sensitive files from entire history.
 
 ---
 
