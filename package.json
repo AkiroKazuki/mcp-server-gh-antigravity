@@ -3,6 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "description": "Antigravity OS - MCP Server System for AI-Powered Development Workflow",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity/issues"
+  },
+  "homepage": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity#readme",
   "workspaces": [
     "packages/*"
   ],

@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "description": "MCP server for managing .memory/ knowledge base with semantic search, git persistence, and file locking",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity.git",
+    "directory": "packages/memory-server"
+  },
   "bin": {
     "antigravity-memory": "./build/index.js"
   },

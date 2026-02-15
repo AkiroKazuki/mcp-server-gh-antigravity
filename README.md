@@ -180,3 +180,21 @@ npm run clean
 # Rebuild everything
 npm run clean && npm run build
 ```
+
+## Security
+
+⚠️ **Important**: Before using this in production or committing to public repositories:
+
+- Review [SECURITY.md](SECURITY.md) for security considerations and best practices
+- Ensure `.memory/` and `.skills/` directories are in your `.gitignore`
+- Never commit API keys, credentials, or sensitive data
+- Regularly audit what's stored in `.memory/` before committing
+- Run with minimal necessary file system permissions
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
