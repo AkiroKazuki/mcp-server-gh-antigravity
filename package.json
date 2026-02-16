@@ -1,14 +1,13 @@
 {
   "name": "antigravity-os-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Antigravity OS - MCP Server System for AI-Powered Development Workflow",
-  "workspaces": [
-    "packages/*"
-  ],
+  "description": "Antigravity OS v2.0 - MCP Server System with Temporal Memory and Intelligence Layer",
+  "workspaces": ["packages/*"],
   "scripts": {
     "build": "npm run build --workspaces",
     "clean": "rm -rf packages/*/build",
-    "dev": "npm run dev --workspaces"
+    "dev": "npm run dev --workspaces",
+    "test": "npm run test --workspaces --if-present"
   }
 }

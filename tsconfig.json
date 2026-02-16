@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true
+  },
+  "references": [
+    {
+      "path": "./packages/memory-server"
+    },
+    {
+      "path": "./packages/copilot-server"
+    },
+    {
+      "path": "./packages/analytics-server"
+    }
+  ]
+}
