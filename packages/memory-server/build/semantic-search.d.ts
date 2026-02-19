@@ -26,5 +26,21 @@ export declare class SemanticSearch {
     }>>;
     private cosineSimilarity;
     private chunkText;
+    /**
+     * Compute pairwise similarity between two text contents.
+     * Used for contradiction detection.
+     */
+    pairwiseSimilarity(text1: string, text2: string): Promise<number>;
+    /**
+     * Search with minimum similarity threshold.
+     */
+    searchWithThreshold(query: string, topK?: number, minSimilarity?: number): Promise<Array<{
+        file: string;
+        content: string;
+        category: string;
+        similarity: number;
+    }>>;
+    isReady(): boolean;
+    hasIndex(): boolean;
     private categorizeFile;
 }

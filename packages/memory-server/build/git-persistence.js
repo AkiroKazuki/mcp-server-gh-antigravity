@@ -110,4 +110,67 @@ export class GitPersistence {
             return "";
         }
     }
+    /**
+     * Get recent commit hashes and messages across all files.
+     */
+    async getRecentOperations(limit = 10) {
+        await this.init();
+        try {
+            const { stdout } = await execFileAsync("git", ["log", `--format=%H|%s|%aI`, `-${limit}`], { cwd: this.memoryPath });
+            if (!stdout.trim())
+                return [];
+            const results = [];
+            for (const line of stdout.trim().split("\n")) {
+                const [hash, message, timestamp] = line.split("|");
+                if (!hash)
+                    continue;
+                // Get files changed in this commit
+                let files = [];
+                try {
+                    const { stdout: fileOutput } = await execFileAsync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", hash], { cwd: this.memoryPath });
+                    files = fileOutput.trim().split("\n").filter(Boolean);
+                }
+                catch { /* ignore */ }
+                results.push({ hash, message, timestamp, files });
+            }
+            return results;
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Get the latest commit hash (HEAD).
+     */
+    async getLatestCommitHash() {
+        await this.init();
+        try {
+            const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: this.memoryPath });
+            return stdout.trim() || null;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Commit all changes (for bulk operations).
+     */
+    async commitAll(operation, description) {
+        await this.init();
+        try {
+            await execFileAsync("git", ["add", "-A"], { cwd: this.memoryPath });
+            const timestamp = new Date().toISOString();
+            const message = `[${operation}] ${description}\n\nTimestamp: ${timestamp}`;
+            await execFileAsync("git", ["commit", "-m", message], {
+                cwd: this.memoryPath,
+            });
+            return await this.getLatestCommitHash();
+        }
+        catch (err) {
+            if (!err.message?.includes("nothing to commit")) {
+                console.error(`[git] CommitAll failed: ${err.message}`);
+            }
+            return null;
+        }
+    }
 }

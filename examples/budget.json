@@ -1,0 +1,29 @@
+{
+  "daily_limit_usd": 2.0,
+  "weekly_limit_usd": 10.0,
+  "monthly_limit_usd": 30.0,
+  "alert_threshold": 0.8,
+  "costs": {
+    "antigravity_input": 0.015,
+    "antigravity_output": 0.075,
+    "copilot": 0.0
+  },
+  "emergency_override": false,
+  "rate_limits": {
+    "copilot_execute": {
+      "per_minute": 10,
+      "per_hour": 100,
+      "per_day": 500
+    },
+    "copilot_generate_prompt": {
+      "per_minute": 15,
+      "per_hour": 200,
+      "per_day": 1000
+    },
+    "memory_update": {
+      "per_minute": 30,
+      "per_hour": 500,
+      "per_day": 2000
+    }
+  }
+}

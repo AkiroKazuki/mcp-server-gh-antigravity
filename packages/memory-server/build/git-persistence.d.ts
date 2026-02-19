@@ -14,4 +14,21 @@ export declare class GitPersistence {
     }>>;
     rollback(file: string, commitHash: string): Promise<void>;
     getDiff(file: string, commitHash?: string): Promise<string>;
+    /**
+     * Get recent commit hashes and messages across all files.
+     */
+    getRecentOperations(limit?: number): Promise<Array<{
+        hash: string;
+        message: string;
+        timestamp: string;
+        files: string[];
+    }>>;
+    /**
+     * Get the latest commit hash (HEAD).
+     */
+    getLatestCommitHash(): Promise<string | null>;
+    /**
+     * Commit all changes (for bulk operations).
+     */
+    commitAll(operation: string, description: string): Promise<string | null>;
 }

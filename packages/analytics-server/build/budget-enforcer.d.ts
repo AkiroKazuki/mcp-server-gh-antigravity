@@ -1,3 +1,4 @@
+import type { RateLimitStatus } from './types.js';
 interface BudgetConfig {
     daily_limit_usd: number;
     weekly_limit_usd: number;
@@ -19,13 +20,16 @@ interface CostEntry {
     timestamp: string;
 }
 /**
- * Budget enforcement that prevents runaway spending.
+ * Budget enforcement + rate limiting.
  * Configurable via .memory/config/budget.json.
+ * Rate limits stored in SQLite for sliding window enforcement.
  */
 export declare class BudgetEnforcer {
     private projectRoot;
     private config;
+    private db;
     constructor(projectRoot: string);
+    private getDb;
     loadConfig(): Promise<void>;
     checkBudget(estimatedTokens: number, agent: string): Promise<{
         allowed: boolean;
@@ -43,5 +47,15 @@ export declare class BudgetEnforcer {
     }>;
     readCostLog(): Promise<CostEntry[]>;
     getConfig(): BudgetConfig;
+    checkRateLimit(operation: string): {
+        allowed: boolean;
+        current: number;
+        limit: number;
+        reset_at: string;
+        window: string;
+    };
+    setRateLimit(operation: string, perMinute?: number, perHour?: number, perDay?: number): void;
+    getRateLimitStatus(): RateLimitStatus[];
+    closeDb(): void;
 }
 export {};

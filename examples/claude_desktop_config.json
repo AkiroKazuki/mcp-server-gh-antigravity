@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "antigravity-memory": {
+      "command": "node",
+      "args": [
+        "/Users/you/dev/mcp-server/packages/memory-server/build/index.js"
+      ],
+      "env": {
+        "PROJECT_ROOT": "/Users/you/dev/my-project"
+      }
+    },
+    "antigravity-copilot": {
+      "command": "node",
+      "args": [
+        "/Users/you/dev/mcp-server/packages/copilot-server/build/index.js"
+      ],
+      "env": {
+        "PROJECT_ROOT": "/Users/you/dev/my-project"
+      }
+    },
+    "antigravity-analytics": {
+      "command": "node",
+      "args": [
+        "/Users/you/dev/mcp-server/packages/analytics-server/build/index.js"
+      ],
+      "env": {
+        "PROJECT_ROOT": "/Users/you/dev/my-project"
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import Database from 'better-sqlite3';
 const DEFAULT_CONFIG = {
     daily_limit_usd: 2.0,
     weekly_limit_usd: 10.0,
@@ -13,14 +14,40 @@ const DEFAULT_CONFIG = {
     emergency_override: false,
 };
 /**
- * Budget enforcement that prevents runaway spending.
+ * Budget enforcement + rate limiting.
  * Configurable via .memory/config/budget.json.
+ * Rate limits stored in SQLite for sliding window enforcement.
  */
 export class BudgetEnforcer {
     projectRoot;
     config = DEFAULT_CONFIG;
+    db = null;
     constructor(projectRoot) {
         this.projectRoot = projectRoot;
+    }
+    getDb() {
+        if (!this.db) {
+            const dbPath = path.join(this.projectRoot, process.env.MEMORY_DIR || ".memory", "antigravity.db");
+            this.db = new Database(dbPath);
+            this.db.pragma('journal_mode = WAL');
+            this.db.exec(`
+        CREATE TABLE IF NOT EXISTS rate_limits (
+          operation TEXT PRIMARY KEY,
+          per_minute INTEGER,
+          per_hour INTEGER,
+          per_day INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS rate_limit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          operation TEXT NOT NULL,
+          timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+          allowed INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_rll_op ON rate_limit_log(operation);
+        CREATE INDEX IF NOT EXISTS idx_rll_ts ON rate_limit_log(timestamp);
+      `);
+        }
+        return this.db;
     }
     async loadConfig() {
         const configPath = path.join(this.projectRoot, ".memory", "config", "budget.json");
@@ -29,7 +56,6 @@ export class BudgetEnforcer {
             this.config = { ...DEFAULT_CONFIG, ...JSON.parse(data) };
         }
         catch {
-            // Use defaults, create config file for user reference
             try {
                 await fs.mkdir(path.dirname(configPath), { recursive: true });
                 await fs.writeFile(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
@@ -78,7 +104,6 @@ export class BudgetEnforcer {
             projected_total: projectedTotal,
             daily_limit: this.config.daily_limit_usd,
         };
-        // Check alert threshold
         const threshold = this.config.daily_limit_usd * this.config.alert_threshold;
         if (projectedTotal > threshold) {
             result.warning =
@@ -109,7 +134,7 @@ export class BudgetEnforcer {
                 break;
             }
             case "month": {
-                const monthStr = today.slice(0, 7); // YYYY-MM
+                const monthStr = today.slice(0, 7);
                 filtered = entries.filter((e) => e.date.startsWith(monthStr));
                 break;
             }
@@ -137,5 +162,93 @@ export class BudgetEnforcer {
     }
     getConfig() {
         return { ...this.config };
+    }
+    // --- Rate Limiting ---
+    checkRateLimit(operation) {
+        const db = this.getDb();
+        const config = db.prepare(`SELECT per_minute, per_hour, per_day FROM rate_limits WHERE operation = ?`).get(operation);
+        if (!config) {
+            // Log the call but no limit configured
+            db.prepare(`INSERT INTO rate_limit_log (operation, allowed) VALUES (?, 1)`).run(operation);
+            return { allowed: true, current: 0, limit: 0, reset_at: '', window: 'none' };
+        }
+        // Check per-minute limit
+        if (config.per_minute) {
+            const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+         WHERE operation = ? AND timestamp >= datetime('now', '-1 minute') AND allowed = 1`).get(operation).cnt;
+            if (count >= config.per_minute) {
+                db.prepare(`INSERT INTO rate_limit_log (operation, allowed) VALUES (?, 0)`).run(operation);
+                const resetAt = new Date(Date.now() + 60000).toISOString();
+                return { allowed: false, current: count, limit: config.per_minute, reset_at: resetAt, window: 'per_minute' };
+            }
+        }
+        // Check per-hour limit
+        if (config.per_hour) {
+            const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+         WHERE operation = ? AND timestamp >= datetime('now', '-1 hour') AND allowed = 1`).get(operation).cnt;
+            if (count >= config.per_hour) {
+                db.prepare(`INSERT INTO rate_limit_log (operation, allowed) VALUES (?, 0)`).run(operation);
+                const resetAt = new Date(Date.now() + 3600000).toISOString();
+                return { allowed: false, current: count, limit: config.per_hour, reset_at: resetAt, window: 'per_hour' };
+            }
+        }
+        // Check per-day limit
+        if (config.per_day) {
+            const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+         WHERE operation = ? AND timestamp >= datetime('now', '-1 day') AND allowed = 1`).get(operation).cnt;
+            if (count >= config.per_day) {
+                db.prepare(`INSERT INTO rate_limit_log (operation, allowed) VALUES (?, 0)`).run(operation);
+                const resetAt = new Date(Date.now() + 86400000).toISOString();
+                return { allowed: false, current: count, limit: config.per_day, reset_at: resetAt, window: 'per_day' };
+            }
+        }
+        // Allowed — log successful call
+        db.prepare(`INSERT INTO rate_limit_log (operation, allowed) VALUES (?, 1)`).run(operation);
+        return { allowed: true, current: 0, limit: 0, reset_at: '', window: 'none' };
+    }
+    setRateLimit(operation, perMinute, perHour, perDay) {
+        const db = this.getDb();
+        db.prepare(`INSERT OR REPLACE INTO rate_limits (operation, per_minute, per_hour, per_day) VALUES (?, ?, ?, ?)`).run(operation, perMinute ?? null, perHour ?? null, perDay ?? null);
+    }
+    getRateLimitStatus() {
+        const db = this.getDb();
+        const configs = db.prepare(`SELECT * FROM rate_limits`).all();
+        return configs.map((config) => {
+            const status = { operation: config.operation };
+            if (config.per_minute) {
+                const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+           WHERE operation = ? AND timestamp >= datetime('now', '-1 minute') AND allowed = 1`).get(config.operation).cnt;
+                status.per_minute = {
+                    current: count,
+                    limit: config.per_minute,
+                    reset_at: new Date(Date.now() + 60000).toISOString(),
+                };
+            }
+            if (config.per_hour) {
+                const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+           WHERE operation = ? AND timestamp >= datetime('now', '-1 hour') AND allowed = 1`).get(config.operation).cnt;
+                status.per_hour = {
+                    current: count,
+                    limit: config.per_hour,
+                    reset_at: new Date(Date.now() + 3600000).toISOString(),
+                };
+            }
+            if (config.per_day) {
+                const count = db.prepare(`SELECT COUNT(*) as cnt FROM rate_limit_log
+           WHERE operation = ? AND timestamp >= datetime('now', '-1 day') AND allowed = 1`).get(config.operation).cnt;
+                status.per_day = {
+                    current: count,
+                    limit: config.per_day,
+                    reset_at: new Date(Date.now() + 86400000).toISOString(),
+                };
+            }
+            return status;
+        });
+    }
+    closeDb() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
     }
 }

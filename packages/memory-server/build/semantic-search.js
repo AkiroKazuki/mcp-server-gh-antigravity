@@ -141,6 +141,33 @@ export class SemanticSearch {
             chunks.push(current.trim());
         return chunks.filter((c) => c.length > 50);
     }
+    /**
+     * Compute pairwise similarity between two text contents.
+     * Used for contradiction detection.
+     */
+    async pairwiseSimilarity(text1, text2) {
+        const ready = await this.initialize();
+        if (!ready)
+            return 0;
+        const output1 = await this.embedder(text1, { pooling: "mean", normalize: true });
+        const output2 = await this.embedder(text2, { pooling: "mean", normalize: true });
+        const embedding1 = Array.from(output1.data);
+        const embedding2 = Array.from(output2.data);
+        return this.cosineSimilarity(embedding1, embedding2);
+    }
+    /**
+     * Search with minimum similarity threshold.
+     */
+    async searchWithThreshold(query, topK = 5, minSimilarity = 0.3) {
+        const results = await this.search(query, topK * 2);
+        return results.filter((r) => r.similarity >= minSimilarity).slice(0, topK);
+    }
+    isReady() {
+        return this.modelReady;
+    }
+    hasIndex() {
+        return this.index !== null && this.index.chunks.length > 0;
+    }
     categorizeFile(filepath) {
         if (filepath.includes("decisions"))
             return "decision";
