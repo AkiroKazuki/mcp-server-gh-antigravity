@@ -20,6 +20,9 @@ import { CacheManager } from "./cache-manager.js";
 import { ContextGatherer } from "./context-gatherer.js";
 import { FailureAnalyzer } from "./failure-analyzer.js";
 import { LoopDetector } from "./loop-detector.js";
+import { getEfficiencyRulesPrompt, Logger, InputValidator } from "@antigravity-os/shared";
+
+const log = new Logger("copilot-server");
 
 // --- Configuration ---
 
@@ -69,7 +72,7 @@ class CopilotServer {
     this.setupHandlers();
 
     this.server.onerror = (error) => {
-      console.error("[copilot-server] Error:", error);
+      log.error("Server error", { error: String(error) });
     };
   }
 
@@ -247,29 +250,7 @@ class CopilotServer {
 
       switch (name) {
         case "efficiency_rules":
-          return {
-            description: "Core Antigravity OS efficiency rules",
-            messages: [{
-              role: "user" as const,
-              content: {
-                type: "text" as const,
-                text: [
-                  "# Antigravity OS Efficiency Rules",
-                  "",
-                  "1. **Check memory before starting** — Always read active context and relevant lessons",
-                  "2. **Log decisions immediately** — Use memory_log_decision for all architecture choices",
-                  "3. **Log lessons as they happen** — Use memory_log_lesson for bugs, patterns, anti-patterns",
-                  "4. **Validate before merging** — Use copilot_validate before accepting any generated code",
-                  "5. **Monitor costs** — Check budget before expensive operations",
-                  "6. **Use skill files** — Build reusable prompt templates, don't repeat specifications",
-                  "7. **Detect loops** — If a task fails 3 times, stop and analyze with analyze_failure",
-                  "8. **Batch when possible** — Use copilot_batch_execute for related tasks",
-                  "9. **Cache responses** — Reuse validated results to avoid regeneration costs",
-                  "10. **Review health** — Periodically run memory_health_report and system_health",
-                ].join("\n"),
-              },
-            }],
-          };
+          return getEfficiencyRulesPrompt();
 
         case "quality_standards":
           return {
@@ -345,6 +326,14 @@ class CopilotServer {
   // =========================================================================
 
   private async handleGeneratePrompt(args: any) {
+    new InputValidator("copilot_generate_prompt", args)
+      .requireString("skill_file")
+      .requireString("requirements")
+      .optionalString("target_file")
+      .optionalArray("context_files")
+      .optionalNumber("max_context_depth")
+      .validate();
+
     const skillFile: string = args.skill_file;
     const requirements: string = args.requirements;
     const targetFile: string | undefined = args.target_file;
@@ -420,6 +409,12 @@ class CopilotServer {
   }
 
   private async handleExecute(args: any) {
+    new InputValidator("copilot_execute", args)
+      .requireString("prompt_file")
+      .requireString("output_file")
+      .optionalString("task_id")
+      .validate();
+
     const promptFile: string = args.prompt_file;
     const outputFile: string = args.output_file;
     const taskId: string = args.task_id || `task_${Date.now()}`;
@@ -498,6 +493,11 @@ class CopilotServer {
   }
 
   private async handleValidate(args: any) {
+    new InputValidator("copilot_validate", args)
+      .requireString("file")
+      .optionalArray("requirements")
+      .validate();
+
     const file: string = args.file;
     const requirements: string[] | undefined = args.requirements;
 
@@ -795,7 +795,7 @@ class CopilotServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("[copilot-server] v2.0.0 Running on stdio (11 tools + 2 prompts)");
+    log.info("Running on stdio", { tools: 11, prompts: 2, version: "2.0.0" });
   }
 }
 

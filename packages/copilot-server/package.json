@@ -11,6 +11,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@antigravity-os/shared": "2.0.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "better-sqlite3": "^11.0.0"
   },

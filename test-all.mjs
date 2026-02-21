@@ -173,9 +173,131 @@ async function testServer(config) {
   return results;
 }
 
+// --- Negative Tests ---
+
+/**
+ * Test that a tool call with missing required args returns an error.
+ */
+async function testNegative(serverConfig, testCases) {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), `test-neg-${serverConfig.name}-`));
+  mkdirSync(path.join(tmpDir, ".memory", "snapshots"), { recursive: true });
+  mkdirSync(path.join(tmpDir, ".memory", "config"), { recursive: true });
+  mkdirSync(path.join(tmpDir, ".memory", "prompts", "templates"), { recursive: true });
+  mkdirSync(path.join(tmpDir, ".memory", "prompts", "generated"), { recursive: true });
+
+  if (serverConfig.needsGit) {
+    execSync("git init -q", { cwd: tmpDir });
+    execSync("git config user.email test@test.com && git config user.name Test", { cwd: tmpDir });
+  }
+
+  const serverPath = path.join(ROOT, "packages", serverConfig.name, "build", "index.js");
+  const proc = spawn("node", [serverPath], {
+    env: { ...process.env, PROJECT_ROOT: tmpDir, MEMORY_DIR: ".memory" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  let stderr = "";
+  proc.stderr.on("data", (d) => { stderr += d.toString(); });
+
+  const messagesPromise = readMessages(proc, 12000);
+
+  // Initialize
+  sendMessage(proc, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "neg-test", version: "1.0" },
+    },
+  });
+
+  await new Promise((r) => setTimeout(r, 1000));
+  sendMessage(proc, { jsonrpc: "2.0", method: "notifications/initialized" });
+
+  // Send negative test cases as tool calls
+  for (let i = 0; i < testCases.length; i++) {
+    sendMessage(proc, {
+      jsonrpc: "2.0",
+      id: 100 + i,
+      method: "tools/call",
+      params: testCases[i].params,
+    });
+  }
+
+  await new Promise((r) => setTimeout(r, 3000));
+  proc.stdin.end();
+
+  const messages = await messagesPromise;
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+  const results = [];
+  for (let i = 0; i < testCases.length; i++) {
+    const tc = testCases[i];
+    const resp = messages.find((m) => m.id === 100 + i);
+    const pass = tc.expectError
+      ? Boolean(resp?.result?.isError || resp?.error || (resp?.result?.content?.[0]?.text || "").toLowerCase().includes("error"))
+      : Boolean(resp?.result);
+
+    results.push({
+      name: tc.name,
+      pass,
+      detail: pass ? "OK" : `Unexpected response: ${JSON.stringify(resp)?.slice(0, 200)}`,
+    });
+  }
+
+  return results;
+}
+
+const NEGATIVE_TESTS = {
+  "analytics-server": [
+    {
+      name: "log_cost with missing args",
+      params: { name: "log_cost", arguments: {} },
+      expectError: true,
+    },
+    {
+      name: "check_budget with wrong types",
+      params: { name: "check_budget", arguments: { estimated_tokens: "not_a_number", agent: 123 } },
+      expectError: true,
+    },
+    {
+      name: "unknown tool name",
+      params: { name: "nonexistent_tool", arguments: {} },
+      expectError: true,
+    },
+  ],
+  "copilot-server": [
+    {
+      name: "copilot_execute with missing prompt_file",
+      params: { name: "copilot_execute", arguments: { output_file: "test.ts" } },
+      expectError: true,
+    },
+    {
+      name: "copilot_validate with missing file",
+      params: { name: "copilot_validate", arguments: {} },
+      expectError: true,
+    },
+  ],
+  "memory-server": [
+    {
+      name: "memory_read with invalid key",
+      params: { name: "memory_read", arguments: { file: "nonexistent_key" } },
+      expectError: true,
+    },
+    {
+      name: "memory_update with missing content",
+      params: { name: "memory_update", arguments: { file: "tech_stack", operation: "replace" } },
+      expectError: true,
+    },
+  ],
+};
+
 // --- Main ---
 async function main() {
   console.log("=== Antigravity OS v2.0 Smoke Tests ===\n");
+  console.log("--- Happy Path Tests ---\n");
   let allPass = true;
 
   for (const config of SERVERS) {
@@ -190,6 +312,30 @@ async function main() {
       } else {
         console.log("FAIL");
         result.errors.forEach((e) => console.log(`  ERROR: ${e}`));
+        allPass = false;
+      }
+    } catch (err) {
+      console.log(`ERROR: ${err.message}`);
+      allPass = false;
+    }
+  }
+
+  console.log(`\n--- Negative Tests (Error Paths) ---\n`);
+
+  for (const config of SERVERS) {
+    const cases = NEGATIVE_TESTS[config.name];
+    if (!cases?.length) continue;
+
+    process.stdout.write(`Testing ${config.name} errors... `);
+    try {
+      const results = await testNegative(config, cases);
+      const passed = results.filter((r) => r.pass).length;
+      const failed = results.filter((r) => !r.pass);
+      if (failed.length === 0) {
+        console.log(`PASS (${passed}/${results.length} negative cases)`);
+      } else {
+        console.log(`PARTIAL (${passed}/${results.length})`);
+        failed.forEach((f) => console.log(`  FAIL: ${f.name} — ${f.detail}`));
         allPass = false;
       }
     } catch (err) {

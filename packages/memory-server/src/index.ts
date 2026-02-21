@@ -18,6 +18,9 @@ import { FileLockManager } from "./lock-manager.js";
 import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
+import { Logger } from "@antigravity-os/shared";
+
+const log = new Logger("memory-server");
 
 // --- Configuration ---
 
@@ -26,7 +29,7 @@ const MEMORY_DIR = process.env.MEMORY_DIR || ".memory";
 const MEMORY_PATH = path.join(PROJECT_ROOT, MEMORY_DIR);
 const DB_PATH = path.join(MEMORY_PATH, "antigravity.db");
 
-const FILE_MAP: Record<string, string> = {
+const FILE_MAP = {
   tech_stack: "core/tech_stack.md",
   project_overview: "core/project_overview.md",
   architecture: "core/architecture.md",
@@ -37,16 +40,29 @@ const FILE_MAP: Record<string, string> = {
   best_practices: "lessons/best_practices.md",
   bugs_fixed: "lessons/bugs_fixed.md",
   anti_patterns: "lessons/anti_patterns.md",
-};
+} as const;
 
-const CATEGORY_DIRS: Record<string, string> = {
+type FileKey = keyof typeof FILE_MAP;
+const VALID_FILE_KEYS = Object.keys(FILE_MAP) as FileKey[];
+
+const CATEGORY_DIRS = {
   decisions: "decisions",
   lessons: "lessons",
   core: "core",
   active: "active",
   patterns: "lessons",
   all: "",
-};
+} as const;
+
+type CategoryKey = keyof typeof CATEGORY_DIRS;
+
+function getFilePath(key: string): string | undefined {
+  return (FILE_MAP as Record<string, string>)[key];
+}
+
+function getCategoryDir(key: string): string | undefined {
+  return (CATEGORY_DIRS as Record<string, string>)[key];
+}
 
 // --- Helpers ---
 
@@ -71,6 +87,8 @@ class MemoryServer {
   private git: GitPersistence;
   private semantic: SemanticSearch;
   private temporal: TemporalMemory;
+  private idempotencyCache: Map<string, { result: unknown; timestamp: number }> = new Map();
+  private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
 
   constructor() {
     this.server = new Server(
@@ -85,7 +103,7 @@ class MemoryServer {
     this.setupToolHandlers();
 
     this.server.onerror = (error) => {
-      console.error("[memory-server] Error:", error);
+      log.error("Server error", { error: String(error) });
     };
   }
 
@@ -144,7 +162,7 @@ class MemoryServer {
         },
         {
           name: "memory_log_decision",
-          description: "Log a structured architectural decision with confidence tracking.",
+          description: "Log a structured architectural decision with confidence tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -153,13 +171,14 @@ class MemoryServer {
               why: { type: "string", description: "Reasoning (2-3 sentences)" },
               alternatives: { type: "array", items: { type: "string" }, description: "Options considered" },
               impact: { type: "string", description: "What this changes" },
+              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
             },
             required: ["title", "what", "why"],
           },
         },
         {
           name: "memory_log_lesson",
-          description: "Log a bug fix, pattern, or anti-pattern with validation tracking.",
+          description: "Log a bug fix, pattern, or anti-pattern with validation tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -170,6 +189,7 @@ class MemoryServer {
               root_cause: { type: "string", description: "Why it happened" },
               fix: { type: "string", description: "How we fixed it" },
               prevention: { type: "string", description: "How to avoid in future" },
+              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
             },
             required: ["category", "type", "title"],
           },
@@ -413,8 +433,8 @@ class MemoryServer {
     const searchDirs = categories.includes("all")
       ? [MEMORY_PATH]
       : categories
-        .map((c) => CATEGORY_DIRS[c])
-        .filter(Boolean)
+        .map((c) => getCategoryDir(c))
+        .filter((d): d is string => Boolean(d))
         .map((d) => path.join(MEMORY_PATH, d));
 
     const results: Array<{ file: string; preview: string; matches: number; category: string }> = [];
@@ -460,7 +480,7 @@ class MemoryServer {
 
   private async handleRead(args: any) {
     const fileKey: string = args.file;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) {
       return respondError(`Unknown file: ${fileKey}. Available: ${Object.keys(FILE_MAP).join(", ")}`);
     }
@@ -498,7 +518,7 @@ class MemoryServer {
     const content: string = args.content;
     const section: string | undefined = args.section;
 
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -567,6 +587,12 @@ class MemoryServer {
   }
 
   private async handleLogDecision(args: any) {
+    // Idempotency check
+    if (args.idempotency_key) {
+      const cached = this.checkIdempotency(args.idempotency_key);
+      if (cached) return cached;
+    }
+
     const date = new Date().toISOString().split("T")[0];
     const entry = [
       `\n## ${date}: ${args.title}`,
@@ -601,16 +627,27 @@ class MemoryServer {
       );
       this.temporal.logOperation("memory_log_decision", "decisions/ACTIVE.md", commitHash ?? undefined, tEntry.id, args.title);
 
-      return respond({
+      const result = respond({
         status: "success",
         operation: "memory_log_decision",
         summary: `Logged decision: ${args.title}`,
         metadata: { decision: args.title, date, file: "decisions/ACTIVE.md", entry_id: tEntry.id, confidence: tEntry.confidence },
       });
+
+      if (args.idempotency_key) {
+        this.storeIdempotency(args.idempotency_key, result);
+      }
+      return result;
     });
   }
 
   private async handleLogLesson(args: any) {
+    // Idempotency check
+    if (args.idempotency_key) {
+      const cached = this.checkIdempotency(args.idempotency_key);
+      if (cached) return cached;
+    }
+
     const typeFileMap: Record<string, string> = {
       bug: "lessons/bugs_fixed.md",
       pattern: "lessons/best_practices.md",
@@ -654,12 +691,17 @@ class MemoryServer {
       );
       this.temporal.logOperation("memory_log_lesson", relPath, commitHash ?? undefined, tEntry.id, args.title);
 
-      return respond({
+      const result = respond({
         status: "success",
         operation: "memory_log_lesson",
         summary: `Logged ${args.type}: ${args.title}`,
         metadata: { type: args.type, category: args.category, title: args.title, file: relPath, entry_id: tEntry.id },
       });
+
+      if (args.idempotency_key) {
+        this.storeIdempotency(args.idempotency_key, result);
+      }
+      return result;
     });
   }
 
@@ -716,7 +758,7 @@ class MemoryServer {
     const summary: Record<string, any> = {};
 
     const extractSummary = async (fileKey: string): Promise<string | null> => {
-      const relPath = FILE_MAP[fileKey];
+      const relPath = getFilePath(fileKey);
       if (!relPath) return null;
       try {
         const content = await fs.readFile(path.join(MEMORY_PATH, relPath), "utf-8");
@@ -760,7 +802,7 @@ class MemoryServer {
   private async handleHistory(args: any) {
     const fileKey: string = args.file;
     const limit: number = args.limit || 10;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -777,7 +819,7 @@ class MemoryServer {
   private async handleRollback(args: any) {
     const fileKey: string = args.file;
     const commitHash: string = args.commit_hash;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -798,7 +840,7 @@ class MemoryServer {
   private async handleDiff(args: any) {
     const fileKey: string = args.file;
     const commitHash: string | undefined = args.commit_hash;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -824,7 +866,7 @@ class MemoryServer {
     try {
       semanticResult = await this.semantic.indexMemory();
     } catch (err: any) {
-      console.error(`[memory-server] Semantic indexing failed: ${err.message}`);
+      log.warn("Semantic indexing failed", { error: err.message });
     }
 
     return respond({
@@ -1093,6 +1135,29 @@ class MemoryServer {
     return "other";
   }
 
+  private checkIdempotency(key: string): unknown | null {
+    const entry = this.idempotencyCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+      this.idempotencyCache.delete(key);
+      return null;
+    }
+    return entry.result;
+  }
+
+  private storeIdempotency(key: string, result: unknown): void {
+    this.idempotencyCache.set(key, { result, timestamp: Date.now() });
+    // Prune expired entries periodically
+    if (this.idempotencyCache.size > 100) {
+      const now = Date.now();
+      for (const [k, v] of this.idempotencyCache) {
+        if (now - v.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+          this.idempotencyCache.delete(k);
+        }
+      }
+    }
+  }
+
   async run() {
     // Ensure memory directories exist
     const dirs = ["core", "active", "decisions", "decisions/archive", "lessons", "prompts/templates", "prompts/generated", "snapshots", "config"];
@@ -1107,15 +1172,15 @@ class MemoryServer {
     try {
       const synced = await this.temporal.syncFromMarkdown();
       if (synced > 0) {
-        console.error(`[memory-server] Migrated ${synced} entries to v2 format`);
+        log.info("Migrated entries to v2 format", { synced });
       }
     } catch (err: any) {
-      console.error(`[memory-server] Temporal sync warning: ${err.message}`);
+      log.warn("Temporal sync warning", { error: err.message });
     }
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("[memory-server] v2.0.0 Running on stdio (18 tools)");
+    log.info("Running on stdio", { tools: 18, version: "2.0.0" });
   }
 }
 

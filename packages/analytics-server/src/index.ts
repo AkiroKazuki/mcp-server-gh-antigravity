@@ -18,6 +18,9 @@ import path from "node:path";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
+import { getEfficiencyRulesPrompt, Logger, parseJsonl, InputValidator } from "@antigravity-os/shared";
+
+const log = new Logger("analytics-server");
 
 // --- Configuration ---
 
@@ -61,7 +64,7 @@ class AnalyticsServer {
     this.setupHandlers();
 
     this.server.onerror = (error) => {
-      console.error("[analytics-server] Error:", error);
+      log.error("Server error", { error: String(error) });
     };
   }
 
@@ -72,7 +75,7 @@ class AnalyticsServer {
         // Enhanced v1 tools
         {
           name: "log_cost",
-          description: "Log an API cost event with operation timing.",
+          description: "Log an API cost event with operation timing. Returns: { status, summary, metadata: { date, agent, tokens, cost_usd, timestamp, duration_ms } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -87,7 +90,7 @@ class AnalyticsServer {
         },
         {
           name: "get_cost_summary",
-          description: "Get cost summary for a period with predictions.",
+          description: "Get cost summary for a period. Returns: { status, summary, metadata: { period, total_cost_usd, total_tokens, operation_count, daily_limit, by_agent } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -97,12 +100,12 @@ class AnalyticsServer {
         },
         {
           name: "get_copilot_performance",
-          description: "Get Copilot performance stats with skill correlation.",
+          description: "Get Copilot performance stats with skill correlation. Returns: { status, summary, metadata: { total_scored, avg_overall, avg_relevance, avg_correctness, avg_quality, avg_security, by_skill } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_insights",
-          description: "Get actionable insights and optimization suggestions.",
+          description: "Get actionable insights and optimization suggestions. Returns: { status, summary, metadata: { focus, insights: string[] } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -112,7 +115,7 @@ class AnalyticsServer {
         },
         {
           name: "check_budget",
-          description: "Check if an operation is within budget with rate limiting.",
+          description: "Check if an operation is within budget with rate limiting. Returns: { status: 'success'|'budget_exceeded'|'rate_limited', metadata: { budget: { allowed, today_spend, operation_cost, projected_total, daily_limit }, rate_limit } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -126,7 +129,7 @@ class AnalyticsServer {
         // New v2 tools
         {
           name: "get_performance_profile",
-          description: "Get operation timing profile with p50/p95/p99 percentiles.",
+          description: "Get operation timing profile with p50/p95/p99 percentiles. Returns: { status, metadata: { total_operations, avg_duration_ms, operations: OperationProfile[] } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -136,22 +139,22 @@ class AnalyticsServer {
         },
         {
           name: "system_health",
-          description: "Check system component health (disk, git, index, budget, database).",
+          description: "Check system component health (disk, git, index, budget, database). Returns: { status, metadata: { overall_status: 'healthy'|'degraded'|'unhealthy', components, alerts, recommendations } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_skill_effectiveness",
-          description: "Analyze which skill files produce the best results.",
+          description: "Analyze which skill files produce the best results. Returns: { status, metadata: { skills: Array<{ name, usage_count, avg_score_when_used, effectiveness }>, baseline_avg } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "predict_monthly_cost",
-          description: "Predict monthly cost based on recent trends.",
+          description: "Predict monthly cost based on recent trends. Returns: { status, metadata: { predicted_usd, range_low_usd, range_high_usd, confidence, trends: { increasing, rate_of_change } } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_bottlenecks",
-          description: "Identify slow operations that exceed a duration threshold.",
+          description: "Identify slow operations exceeding a duration threshold. Returns: { status, metadata: { threshold_ms, bottlenecks: Array<{ operation, avg_duration_ms, occurrences, impact }> } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -161,7 +164,7 @@ class AnalyticsServer {
         },
         {
           name: "export_analytics",
-          description: "Export analytics data as JSON.",
+          description: "Export analytics data as JSON. Returns: { status, metadata: { export_file, sections, size_bytes } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -175,7 +178,7 @@ class AnalyticsServer {
         },
         {
           name: "set_rate_limit",
-          description: "Configure rate limits for an operation.",
+          description: "Configure rate limits for an operation. Returns: { status, metadata: { operation, per_minute, per_hour, per_day } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -189,7 +192,7 @@ class AnalyticsServer {
         },
         {
           name: "get_rate_limit_status",
-          description: "Get current rate limit configuration and usage.",
+          description: "Get current rate limit configuration and usage. Returns: { status, metadata: { rate_limits: Array<{ operation, per_minute?, per_hour?, per_day? }> } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
       ],
@@ -215,29 +218,7 @@ class AnalyticsServer {
 
       switch (name) {
         case "efficiency_rules":
-          return {
-            description: "Core Antigravity OS efficiency rules",
-            messages: [{
-              role: "user" as const,
-              content: {
-                type: "text" as const,
-                text: [
-                  "# Antigravity OS Efficiency Rules",
-                  "",
-                  "1. **Check memory before starting** — Always read active context first",
-                  "2. **Log decisions immediately** — Use memory_log_decision for architecture choices",
-                  "3. **Log lessons as they happen** — Use memory_log_lesson for bugs and patterns",
-                  "4. **Monitor costs** — Check budget before expensive operations",
-                  "5. **Use skill files** — Build reusable prompts, don't repeat specs",
-                  "6. **Detect loops** — Stop after 3 failures and analyze",
-                  "7. **Batch operations** — Use batch_execute for related tasks",
-                  "8. **Cache responses** — Reuse validated results",
-                  "9. **Review health** — Run system_health periodically",
-                  "10. **Export analytics** — Track trends with export_analytics",
-                ].join("\n"),
-              },
-            }],
-          };
+          return getEfficiencyRulesPrompt();
 
         case "cost_awareness":
           return {
@@ -322,6 +303,14 @@ class AnalyticsServer {
   // =========================================================================
 
   private async handleLogCost(args: any) {
+    new InputValidator("log_cost", args)
+      .requireString("agent")
+      .requireNumber("tokens")
+      .requireNumber("cost_usd")
+      .requireString("task_description")
+      .optionalNumber("duration_ms")
+      .validate();
+
     const agent: string = args.agent;
     const tokens: number = args.tokens;
     const costUsd: number = args.cost_usd;
@@ -408,7 +397,7 @@ class AnalyticsServer {
 
     try {
       const data = await fs.readFile(scoresPath, "utf-8");
-      scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      scores = parseJsonl<typeof scores[number]>(data).entries;
     } catch { /* no scores yet */ }
 
     if (scores.length === 0) {
@@ -485,7 +474,7 @@ class AnalyticsServer {
       const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
       try {
         const data = await fs.readFile(scoresPath, "utf-8");
-        const scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+        const scores = parseJsonl<{ overall: number }>(data).entries;
         if (scores.length > 0) {
           const recent = scores.slice(-10);
           const avgScore = recent.reduce((s: number, e: any) => s + e.overall, 0) / recent.length;
@@ -509,6 +498,12 @@ class AnalyticsServer {
   }
 
   private async handleCheckBudget(args: any) {
+    new InputValidator("check_budget", args)
+      .requireNumber("estimated_tokens")
+      .requireString("agent")
+      .optionalString("operation")
+      .validate();
+
     const estimatedTokens: number = args.estimated_tokens;
     const agent: string = args.agent;
     const operation: string | undefined = args.operation;
@@ -576,7 +571,7 @@ class AnalyticsServer {
 
     try {
       const data = await fs.readFile(scoresPath, "utf-8");
-      scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      scores = parseJsonl<typeof scores[number]>(data).entries;
     } catch { /* no scores */ }
 
     if (scores.length === 0) {
@@ -743,7 +738,7 @@ class AnalyticsServer {
       const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
       try {
         const data = await fs.readFile(scoresPath, "utf-8");
-        exportData.scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+        exportData.scores = parseJsonl(data).entries;
       } catch {
         exportData.scores = [];
       }
@@ -773,6 +768,13 @@ class AnalyticsServer {
   }
 
   private async handleSetRateLimit(args: any) {
+    new InputValidator("set_rate_limit", args)
+      .requireString("operation")
+      .optionalNumber("per_minute")
+      .optionalNumber("per_hour")
+      .optionalNumber("per_day")
+      .validate();
+
     const operation: string = args.operation;
     const perMinute: number | undefined = args.per_minute;
     const perHour: number | undefined = args.per_hour;
@@ -816,7 +818,7 @@ class AnalyticsServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("[analytics-server] v2.0.0 Running on stdio (13 tools + 2 prompts)");
+    log.info("Running on stdio", { tools: 13, prompts: 2, version: "2.0.0" });
   }
 }
 
