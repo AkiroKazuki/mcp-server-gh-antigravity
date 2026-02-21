@@ -236,7 +236,7 @@ class CopilotServer {
         // --- New v2.1 tools ---
         {
           name: "copilot_execute_and_validate",
-          description: "Execute GitHub Copilot CLI with prompt file, save output, and validate. AUTOMATICALLY runs 'gh copilot suggest' - no manual terminal commands needed. Returns validation results.",
+          description: "Execute GitHub Copilot CLI with prompt file, save output, and validate. AUTOMATICALLY runs 'gh copilot -p' - no manual terminal commands needed. Returns validation results.",
           inputSchema: {
             type: "object" as const,
             properties: {
