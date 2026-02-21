@@ -94,13 +94,14 @@ class MemoryServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-memory", version: "2.0.0" },
+      { name: "antigravity-memory", version: "2.1.0" },
       { capabilities: { tools: {} } }
     );
     this.lockManager = new FileLockManager();
     this.git = new GitPersistence(MEMORY_PATH);
     this.semantic = new SemanticSearch(MEMORY_PATH);
     this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
+    this.research = new ResearchImporter(MEMORY_PATH);
 
     this.setupToolHandlers();
 
