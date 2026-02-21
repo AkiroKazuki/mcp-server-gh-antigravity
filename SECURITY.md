@@ -68,14 +68,22 @@ These are already in `.gitignore`, but be careful not to force-add them.
 
 ### Budget Configuration
 
-Review budget limits in `.memory/config/budget.json`:
-```json
-{
-  "daily_limit_usd": 2,
-  "weekly_limit_usd": 10,
-  "monthly_limit_usd": 30
-}
-```
+The `.memory/` directory is excluded from version control. You need to create the budget configuration file manually:
+
+1. Copy the example configuration from [`examples/budget.json`](examples/budget.json):
+   ```bash
+   mkdir -p .memory/config
+   cp examples/budget.json .memory/config/budget.json
+   ```
+
+2. Edit `.memory/config/budget.json` to adjust limits:
+   ```json
+   {
+     "daily_limit_usd": 2,
+     "weekly_limit_usd": 10,
+     "monthly_limit_usd": 30
+   }
+   ```
 
 Adjust these according to your needs to prevent unexpected costs.
 
