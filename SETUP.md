@@ -1,4 +1,4 @@
-# Setup Guide — Antigravity OS v2.0 MCP Servers (macOS)
+# Setup Guide — Antigravity OS v2.1 MCP Servers (macOS)
 
 ## Prerequisites
 

@@ -745,7 +745,7 @@ class AnalyticsServer {
     const include: string[] = args?.include || ["costs", "performance", "scores", "health"];
     const exportData: Record<string, any> = {
       exported_at: new Date().toISOString(),
-      version: "2.0.0",
+      version: "2.1.0",
     };
 
     if (include.includes("costs")) {

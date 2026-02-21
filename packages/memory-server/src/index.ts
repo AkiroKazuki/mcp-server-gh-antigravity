@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity OS v2.0 - Memory Server
- * 18 tools: 12 enhanced from v1 + 6 new temporal memory tools.
+ * Antigravity OS v2.1 - Memory Server
+ * 20 tools: 12 enhanced from v1 + 6 temporal memory tools + 2 research tools.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -784,7 +784,7 @@ class MemoryServer {
     const snapshot: Record<string, any> = {
       created_at: new Date().toISOString(),
       tag: tag || null,
-      version: "2.0.0",
+      version: "2.1.0",
       files: {},
       confidence_data: {},
     };

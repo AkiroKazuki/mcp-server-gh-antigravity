@@ -1,4 +1,4 @@
-# Antigravity OS v2.0 — MCP Server System
+# Antigravity OS v2.1 — MCP Server System
 
 [![CI](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml)
