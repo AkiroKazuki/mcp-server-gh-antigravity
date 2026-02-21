@@ -1157,6 +1157,95 @@ class MemoryServer {
   }
 
   // =========================================================================
+  // New v2.1 handlers
+  // =========================================================================
+
+  private async handleImportResearch(args: any) {
+    const { markdown_content, title, tags, source } = args;
+
+    if (!markdown_content || !title) {
+      return respondError("markdown_content and title are required");
+    }
+
+    const result = await this.research.importResearch({
+      markdown_content,
+      title,
+      tags,
+      source,
+    });
+
+    // Git commit the research import
+    await this.git.commitAll("IMPORT", `Imported research: ${title}`);
+    const commitHash = await this.git.getLatestCommitHash();
+
+    // Create temporal entry for the research
+    const tEntry = this.temporal.createEntry(
+      `Research: ${title}`,
+      `research/analyses/${result.researchId}/metadata.json`,
+      "research",
+      title,
+      tags || [],
+    );
+
+    this.temporal.logOperation(
+      "import_research_analysis",
+      `research/analyses/${result.researchId}`,
+      commitHash ?? undefined,
+      tEntry.id,
+      `Imported: ${title}`,
+    );
+
+    return respond({
+      status: "success",
+      operation: "import_research_analysis",
+      summary: `Imported "${title}" with ${result.sections.length} structured sections`,
+      metadata: {
+        research_id: result.researchId,
+        sections_found: result.sections,
+        location: path.relative(MEMORY_PATH, result.researchDir),
+        title,
+        tags: tags || [],
+        source: source || "Unknown",
+        confidence: result.metadata.confidence,
+        entry_id: tEntry.id,
+      },
+    });
+  }
+
+  private async handleGetResearchContext(args: any) {
+    const { research_id, sections, specific_topic } = args;
+
+    if (!research_id) {
+      return respondError("research_id is required");
+    }
+
+    try {
+      const result = await this.research.getResearchContext({
+        research_id,
+        sections,
+        specific_topic,
+      });
+
+      return respond({
+        status: "success",
+        operation: "get_research_context",
+        summary: `Retrieved ${Object.keys(result.content).length} sections for "${result.title}" (${result.full_content_length} chars)`,
+        metadata: {
+          research_id: result.research_id,
+          title: result.title,
+          source: result.source,
+          tags: result.tags,
+          content: result.content,
+          full_content_length: result.full_content_length,
+          sections_returned: Object.keys(result.content),
+        },
+      });
+    } catch (error: any) {
+      return respondError(`Research not found: ${research_id}. Error: ${error.message}`);
+    }
+  }
+
+  // =========================================================================
   // Utilities
   // =========================================================================
 
