@@ -1337,7 +1337,7 @@ class MemoryServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 18, version: "2.0.0" });
+    log.info("Running on stdio", { tools: 20, version: "2.1.0" });
   }
 }
 
