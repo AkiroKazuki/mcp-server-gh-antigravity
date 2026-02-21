@@ -19,6 +19,7 @@ import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
 import { Logger } from "@antigravity-os/shared";
+import { ResearchImporter } from "./research-importer.js";
 
 const log = new Logger("memory-server");
 
@@ -87,6 +88,7 @@ class MemoryServer {
   private git: GitPersistence;
   private semantic: SemanticSearch;
   private temporal: TemporalMemory;
+  private research: ResearchImporter;
   private idempotencyCache: Map<string, { result: unknown; timestamp: number }> = new Map();
   private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
 
