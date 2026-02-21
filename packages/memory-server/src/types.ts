@@ -8,7 +8,7 @@ export interface MemoryEntry {
   content: string;
   file: string;
   section?: string;
-  category: 'decision' | 'lesson' | 'pattern' | 'core' | 'active';
+  category: 'decision' | 'lesson' | 'pattern' | 'core' | 'active' | 'research';
   created_at: string;
   confidence: number;
   last_validated: string;
