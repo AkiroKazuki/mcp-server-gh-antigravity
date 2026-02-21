@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity OS v2.0 - Analytics Server
- * 13 tools + 2 prompts: 5 enhanced from v1 + 8 new tools + 1 new prompt.
+ * Antigravity OS v2.1 - Analytics Server
+ * 14 tools + 2 prompts: 5 enhanced from v1 + 9 new tools + 1 new prompt.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -54,7 +54,7 @@ class AnalyticsServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-analytics", version: "2.0.0" },
+      { name: "antigravity-analytics", version: "2.1.0" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
