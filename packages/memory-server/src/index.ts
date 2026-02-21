@@ -330,6 +330,34 @@ class MemoryServer {
             },
           },
         },
+        // --- New v2.1 tools ---
+        {
+          name: "import_research_analysis",
+          description: "Import markdown analysis from Claude Sonnet research session. Intelligently parses sections and structures into memory categories. Handles variable markdown formats.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              markdown_content: { type: "string", description: "Full markdown content from Sonnet (.md file content)" },
+              title: { type: "string", description: "Research title (e.g., 'Mean Reversion EUR/USD Analysis')" },
+              tags: { type: "array", items: { type: "string" }, description: "Tags for categorization (e.g., ['mean-reversion', 'EUR/USD'])" },
+              source: { type: "string", description: "Source reference (e.g., 'Journal of Finance 2024')" },
+            },
+            required: ["markdown_content", "title"],
+          },
+        },
+        {
+          name: "get_research_context",
+          description: "Get specific research sections for implementation. Returns full content (no summaries) for use in Copilot prompts.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              research_id: { type: "string", description: "Research ID from import_research_analysis" },
+              sections: { type: "array", items: { type: "string" }, description: "Sections to retrieve (e.g., ['implementation', 'findings']). Omit for all." },
+              specific_topic: { type: "string", description: "Optional: Extract only content related to specific topic (e.g., 'stop loss')" },
+            },
+            required: ["research_id"],
+          },
+        },
       ],
     }));
 
@@ -355,6 +383,8 @@ class MemoryServer {
           case "suggest_pruning": return await this.handleSuggestPruning(args);
           case "apply_pruning": return await this.handleApplyPruning(args);
           case "memory_undo": return await this.handleUndo(args);
+          case "import_research_analysis": return await this.handleImportResearch(args);
+          case "get_research_context": return await this.handleGetResearchContext(args);
           default:
             return respondError(`Unknown tool: ${name}`);
         }
