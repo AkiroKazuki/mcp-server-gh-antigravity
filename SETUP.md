@@ -1,4 +1,4 @@
-# Setup Guide — Antigravity OS v2.0 MCP Servers (macOS)
+# Setup Guide — Antigravity OS v2.1 MCP Servers (macOS)
 
 ## Prerequisites
 
@@ -75,10 +75,10 @@ After restart, Claude Desktop should show the MCP tools in the tool list. You ca
 
 > "List all available MCP tools"
 
-You should see **42 tools** and **4 prompts** across 3 servers:
-- Memory server: 18 tools
-- Copilot server: 11 tools + 2 prompts
-- Analytics server: 13 tools + 2 prompts
+You should see **47 tools** and **4 prompts** across 3 servers:
+- Memory server: 20 tools
+- Copilot server: 13 tools + 2 prompts
+- Analytics server: 14 tools + 2 prompts
 
 ## Temporal Memory (v2)
 

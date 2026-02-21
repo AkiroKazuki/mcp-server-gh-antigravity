@@ -1,11 +1,11 @@
-# Antigravity OS v2.0 — MCP Server System
+# Antigravity OS v2.1 — MCP Server System
 
 [![CI](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml)
 [![CodeQL](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **42 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
+A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **47 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
 
 ## What's New in v2
 
@@ -58,7 +58,7 @@ Instead of returning full file contents, tools return compact references (`file`
          v                  v                  v
 +----------------+ +------------------+ +--------------------+
 | memory-server  | | copilot-server   | | analytics-server   |
-|  18 tools      | |  11 tools        | |  13 tools          |
+|  20 tools      | |  13 tools        | |  14 tools          |
 |                | |   2 prompts      | |   2 prompts        |
 +----------------+ +------------------+ +--------------------+
          |                  |                  |
@@ -74,7 +74,7 @@ Instead of returning full file contents, tools return compact references (`file`
 
 Manages the `.memory/` knowledge base with semantic search, git-backed persistence, temporal confidence, and file locking.
 
-**18 tools:**
+**20 tools:**
 
 | Tool | Description |
 |------|-------------|
@@ -96,12 +96,14 @@ Manages the `.memory/` knowledge base with semantic search, git-backed persisten
 | `suggest_pruning` | Dry-run recommendations for archiving low-confidence entries |
 | `apply_pruning` | Archive entries from suggest_pruning |
 | `memory_undo` | Undo recent operations via git rollback (max 10 steps) |
+| `import_research_analysis` | Import research analysis into memory with confidence scoring |
+| `get_research_context` | Retrieve research context for decision-making |
 
 ### Copilot Server (`@antigravity-os/copilot-server`)
 
 Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, caching, and failure analysis.
 
-**11 tools + 2 prompts:**
+**13 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -116,6 +118,8 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 | `copilot_cache_stats` | Cache hit/miss statistics |
 | `analyze_failure` | Diagnose why a prompt failed |
 | `suggest_skill_update` | Propose skill file changes based on failure analysis |
+| `copilot_execute_and_validate` | Execute and validate in a single operation |
+| `implement_with_research_context` | Implement code changes with research context integration |
 
 | Prompt | Description |
 |--------|-------------|
@@ -126,7 +130,7 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 
 Cost tracking, performance profiling, budget enforcement, rate limiting, and system health monitoring.
 
-**13 tools + 2 prompts:**
+**14 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -143,6 +147,7 @@ Cost tracking, performance profiling, budget enforcement, rate limiting, and sys
 | `export_analytics` | Export analytics data as JSON |
 | `set_rate_limit` | Configure sliding window rate limits |
 | `get_rate_limit_status` | Current rate limit config and usage |
+| `log_research_outcome` | Log research outcomes and their effectiveness |
 
 | Prompt | Description |
 |--------|-------------|
