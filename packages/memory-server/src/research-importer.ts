@@ -41,7 +41,7 @@ const SECTION_PATTERNS: Record<string, string[]> = {
 };
 
 export class ResearchImporter {
-  constructor(private memoryPath: string) {}
+  constructor(private memoryPath: string) { }
 
   /**
    * Generate a filesystem-safe research ID from the title.

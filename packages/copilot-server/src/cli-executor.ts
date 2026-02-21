@@ -56,7 +56,7 @@ export class CliExecutor {
       );
 
       // Clean up temp file
-      await fs.unlink(tmpPath).catch(() => {});
+      await fs.unlink(tmpPath).catch(() => { });
 
       if (stderr && stderr.toLowerCase().includes("error")) {
         log.warn("Copilot CLI stderr", { stderr: stderr.slice(0, 500) });
