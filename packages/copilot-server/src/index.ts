@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity OS v2.0 - Copilot Server
- * 11 tools + 2 prompts: 6 enhanced from v1 + 5 new tools + 1 new prompt.
+ * Antigravity OS v2.1 - Copilot Server
+ * 11 tools + 2 prompts: 8 enhanced from v1 + 3 new v2.1 tools.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -20,6 +20,8 @@ import { CacheManager } from "./cache-manager.js";
 import { ContextGatherer } from "./context-gatherer.js";
 import { FailureAnalyzer } from "./failure-analyzer.js";
 import { LoopDetector } from "./loop-detector.js";
+import { CliExecutor } from "./cli-executor.js";
+import { ResearchIntegration } from "./research-integration.js";
 import { getEfficiencyRulesPrompt, Logger, InputValidator } from "@antigravity-os/shared";
 
 const log = new Logger("copilot-server");
