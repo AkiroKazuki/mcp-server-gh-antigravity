@@ -521,6 +521,7 @@ class MemoryServer {
     const fullPath = path.join(MEMORY_PATH, relPath);
     try {
       const content = await fs.readFile(fullPath, "utf-8");
+      const lineCount = content.split("\n").length;
 
       // Attach confidence data for entries matching this file
       const entries = this.temporal.getAllEntries();
@@ -529,17 +530,47 @@ class MemoryServer {
         ? fileEntries.reduce((sum, e) => sum + e.confidence, 0) / fileEntries.length
         : null;
 
-      return respond({
-        status: "success",
-        operation: "memory_read",
-        summary: `Read ${relPath} (${content.split("\n").length} lines)`,
-        metadata: {
-          file: relPath,
-          content,
-          confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
-          tracked_entries: fileEntries.length,
-        },
-      });
+      // v2.1: Return full content for files <5000 lines, chunk for larger
+      if (lineCount <= 5000) {
+        return respond({
+          status: "success",
+          operation: "memory_read",
+          summary: `Read ${relPath} (${lineCount} lines, full content)`,
+          metadata: {
+            file: relPath,
+            content,
+            line_count: lineCount,
+            confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
+            tracked_entries: fileEntries.length,
+          },
+        });
+      } else {
+        // Chunk large files
+        const lines = content.split("\n");
+        const chunkSize = 5000;
+        const totalChunks = Math.ceil(lines.length / chunkSize);
+        const chunk = args.chunk ?? 0;
+        const start = chunk * chunkSize;
+        const end = Math.min(start + chunkSize, lines.length);
+        const chunkContent = lines.slice(start, end).join("\n");
+
+        return respond({
+          status: "success",
+          operation: "memory_read",
+          summary: `Read ${relPath} chunk ${chunk + 1}/${totalChunks} (${lineCount} total lines)`,
+          metadata: {
+            file: relPath,
+            content: chunkContent,
+            line_count: lineCount,
+            chunk: chunk,
+            total_chunks: totalChunks,
+            chunk_lines: end - start,
+            confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
+            tracked_entries: fileEntries.length,
+            note: `Content split into ${totalChunks} chunks. Use memory_read with chunk parameter to read more.`,
+          },
+        });
+      }
     } catch {
       return respondError(`File not found: ${relPath}. Create it first by using memory_update with operation "replace".`);
     }
