@@ -55,7 +55,7 @@ function respondError(message: string) {
 class CopilotServer {
   private server: Server;
   private validator: Validator;
-  private cache: CacheManager;
+  private cache!: CacheManager;
   private contextGatherer: ContextGatherer;
   private failureAnalyzer: FailureAnalyzer;
   private loopDetector: LoopDetector;
@@ -68,7 +68,6 @@ class CopilotServer {
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.validator = new Validator();
-    this.cache = new CacheManager(DB_PATH);
     this.contextGatherer = new ContextGatherer(PROJECT_ROOT);
     this.failureAnalyzer = new FailureAnalyzer();
     this.loopDetector = new LoopDetector();
@@ -1055,6 +1054,9 @@ class CopilotServer {
     // Ensure required directories
     await fs.mkdir(SKILLS_DIR, { recursive: true });
     await fs.mkdir(GENERATED_DIR, { recursive: true });
+    await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+
+    this.cache = new CacheManager(DB_PATH);
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);

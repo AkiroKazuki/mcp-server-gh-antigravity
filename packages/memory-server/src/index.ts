@@ -87,7 +87,7 @@ class MemoryServer {
   private lockManager: FileLockManager;
   private git: GitPersistence;
   private semantic: SemanticSearch;
-  private temporal: TemporalMemory;
+  private temporal!: TemporalMemory;
   private research: ResearchImporter;
   private idempotencyCache: Map<string, { result: unknown; timestamp: number }> = new Map();
   private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
@@ -100,7 +100,6 @@ class MemoryServer {
     this.lockManager = new FileLockManager();
     this.git = new GitPersistence(MEMORY_PATH);
     this.semantic = new SemanticSearch(MEMORY_PATH);
-    this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
     this.research = new ResearchImporter(MEMORY_PATH);
 
     this.setupToolHandlers();
@@ -1321,6 +1320,9 @@ class MemoryServer {
     for (const dir of dirs) {
       await fs.mkdir(path.join(MEMORY_PATH, dir), { recursive: true });
     }
+
+    // Initialize database after directories exist
+    this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
 
     // Initialize git
     await this.git.init();

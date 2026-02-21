@@ -49,7 +49,7 @@ function respondError(message: string) {
 class AnalyticsServer {
   private server: Server;
   private budget: BudgetEnforcer;
-  private profiler: PerformanceProfiler;
+  private profiler!: PerformanceProfiler;
   private health: HealthMonitor;
 
   constructor() {
@@ -58,7 +58,6 @@ class AnalyticsServer {
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
-    this.profiler = new PerformanceProfiler(DB_PATH);
     this.health = new HealthMonitor(PROJECT_ROOT);
 
     this.setupHandlers();
@@ -930,6 +929,8 @@ class AnalyticsServer {
   async run() {
     await fs.mkdir(path.join(MEMORY_PATH, "snapshots"), { recursive: true });
     await fs.mkdir(path.join(MEMORY_PATH, "config"), { recursive: true });
+
+    this.profiler = new PerformanceProfiler(DB_PATH);
 
     await this.budget.loadConfig();
 
