@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+        continue-on-error: true
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.version }}
+          body: |
+            ## Antigravity OS v${{ steps.get_version.outputs.version }}
+
+            ### Changes
+            See [CHANGELOG.md](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/blob/main/CHANGELOG.md) for details.
+
+            ### Packages
+            - `@antigravity-os/memory-server`
+            - `@antigravity-os/copilot-server`
+            - `@antigravity-os/analytics-server`
+            - `@antigravity-os/shared`
+
+          draft: false
+          prerelease: false
+
+      - name: Publish to NPM (optional)
+        if: false  # Set to true when ready to publish to npm
+        run: |
+          cd packages/shared && npm publish --access public
+          cd ../memory-server && npm publish --access public
+          cd ../copilot-server && npm publish --access public
+          cd ../analytics-server && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
