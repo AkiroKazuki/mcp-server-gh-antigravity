@@ -233,6 +233,38 @@ class CopilotServer {
             required: ["prompt_file", "skill_file"],
           },
         },
+        // --- New v2.1 tools ---
+        {
+          name: "copilot_execute_and_validate",
+          description: "Execute GitHub Copilot CLI with prompt file, save output, and validate. AUTOMATICALLY runs 'gh copilot suggest' - no manual terminal commands needed. Returns validation results.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              prompt_file: { type: "string", description: "Path to prompt file (from copilot_generate_prompt)" },
+              output_file: { type: "string", description: "Where to save generated code" },
+              requirements: { type: "array", items: { type: "string" }, description: "Requirements to validate (e.g., ['Type hints', 'Handle None values'])" },
+              auto_approve_if_valid: { type: "boolean", description: "Automatically accept if validation passes (default: false)" },
+            },
+            required: ["prompt_file", "output_file"],
+          },
+        },
+        {
+          name: "implement_with_research_context",
+          description: "Complete workflow: Load research context → Generate prompt → Execute Copilot → Validate → Link to research. One tool call for research-based implementation.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              research_id: { type: "string", description: "Research ID from import_research_analysis" },
+              research_section: { type: "string", description: "Specific section (e.g., 'implementation', 'findings')" },
+              specific_topic: { type: "string", description: "Optional: Specific topic from section (e.g., 'entry rules')" },
+              task_description: { type: "string", description: "What to implement (e.g., 'Bollinger Band entry signal')" },
+              file_path: { type: "string", description: "Output file path" },
+              function_signature: { type: "string", description: "Complete function signature with types" },
+              requirements: { type: "array", items: { type: "string" }, description: "Additional requirements" },
+            },
+            required: ["research_id", "task_description", "file_path"],
+          },
+        },
       ],
     }));
 
