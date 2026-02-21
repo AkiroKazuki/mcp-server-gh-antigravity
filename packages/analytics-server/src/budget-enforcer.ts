@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import Database from 'better-sqlite3';
-import type { RateLimitConfig, RateLimitStatus } from './types.js';
+import { parseJsonl } from '@antigravity-os/shared';
+import type { RateLimitStatus } from './types.js';
 
 interface BudgetConfig {
   daily_limit_usd: number;
@@ -14,6 +15,7 @@ interface BudgetConfig {
     copilot: number;
   };
   emergency_override: boolean;
+  override_expires_at?: string;
 }
 
 interface CostEntry {
@@ -26,9 +28,9 @@ interface CostEntry {
 }
 
 const DEFAULT_CONFIG: BudgetConfig = {
-  daily_limit_usd: 2.0,
-  weekly_limit_usd: 10.0,
-  monthly_limit_usd: 30.0,
+  daily_limit_usd: 5.0,
+  weekly_limit_usd: 25.0,
+  monthly_limit_usd: 100.0,
   alert_threshold: 0.8,
   costs: {
     antigravity_input: 0.015,
@@ -121,14 +123,35 @@ export class BudgetEnforcer {
     await this.loadConfig();
 
     if (this.config.emergency_override) {
-      return {
-        allowed: true,
-        today_spend: 0,
-        operation_cost: 0,
-        projected_total: 0,
-        daily_limit: this.config.daily_limit_usd,
-        warning: "Emergency override is active. Budget limits are disabled.",
-      };
+      // Check if override has expired
+      if (this.config.override_expires_at) {
+        const expiresAt = new Date(this.config.override_expires_at);
+        if (expiresAt <= new Date()) {
+          // Override expired — disable it and persist the change
+          this.config.emergency_override = false;
+          this.config.override_expires_at = undefined;
+          await this.persistConfig();
+          // Fall through to normal budget check
+        } else {
+          return {
+            allowed: true,
+            today_spend: 0,
+            operation_cost: 0,
+            projected_total: 0,
+            daily_limit: this.config.daily_limit_usd,
+            warning: `Emergency override active (expires: ${this.config.override_expires_at}). Budget limits are disabled.`,
+          };
+        }
+      } else {
+        return {
+          allowed: true,
+          today_spend: 0,
+          operation_cost: 0,
+          projected_total: 0,
+          daily_limit: this.config.daily_limit_usd,
+          warning: "Emergency override active with NO expiry. Set override_expires_at to auto-disable.",
+        };
+      }
     }
 
     const today = new Date().toISOString().split("T")[0];
@@ -235,8 +258,7 @@ export class BudgetEnforcer {
 
     try {
       const content = await fs.readFile(logFile, "utf-8");
-      const lines = content.trim().split("\n").filter(Boolean);
-      return lines.map((line) => JSON.parse(line));
+      return parseJsonl<CostEntry>(content).entries;
     } catch {
       return [];
     }
@@ -244,6 +266,18 @@ export class BudgetEnforcer {
 
   getConfig(): BudgetConfig {
     return { ...this.config };
+  }
+
+  private async persistConfig(): Promise<void> {
+    const configPath = path.join(
+      this.projectRoot,
+      ".memory",
+      "config",
+      "budget.json"
+    );
+    try {
+      await fs.writeFile(configPath, JSON.stringify(this.config, null, 2), "utf-8");
+    } catch { /* ignore write failures */ }
   }
 
   // --- Rate Limiting ---

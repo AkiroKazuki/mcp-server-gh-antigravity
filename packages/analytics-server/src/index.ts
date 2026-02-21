@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity OS v2.0 - Analytics Server
- * 13 tools + 2 prompts: 5 enhanced from v1 + 8 new tools + 1 new prompt.
+ * Antigravity OS v2.1 - Analytics Server
+ * 14 tools + 2 prompts: 5 enhanced from v1 + 9 new tools + 1 new prompt.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -18,6 +18,9 @@ import path from "node:path";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
+import { getEfficiencyRulesPrompt, Logger, parseJsonl, InputValidator } from "@antigravity-os/shared";
+
+const log = new Logger("analytics-server");
 
 // --- Configuration ---
 
@@ -51,7 +54,7 @@ class AnalyticsServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-analytics", version: "2.0.0" },
+      { name: "antigravity-analytics", version: "2.1.0" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
@@ -61,7 +64,7 @@ class AnalyticsServer {
     this.setupHandlers();
 
     this.server.onerror = (error) => {
-      console.error("[analytics-server] Error:", error);
+      log.error("Server error", { error: String(error) });
     };
   }
 
@@ -72,7 +75,7 @@ class AnalyticsServer {
         // Enhanced v1 tools
         {
           name: "log_cost",
-          description: "Log an API cost event with operation timing.",
+          description: "Log an API cost event with operation timing. Returns: { status, summary, metadata: { date, agent, tokens, cost_usd, timestamp, duration_ms } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -87,7 +90,7 @@ class AnalyticsServer {
         },
         {
           name: "get_cost_summary",
-          description: "Get cost summary for a period with predictions.",
+          description: "Get cost summary for a period. Returns: { status, summary, metadata: { period, total_cost_usd, total_tokens, operation_count, daily_limit, by_agent } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -97,12 +100,12 @@ class AnalyticsServer {
         },
         {
           name: "get_copilot_performance",
-          description: "Get Copilot performance stats with skill correlation.",
+          description: "Get Copilot performance stats with skill correlation. Returns: { status, summary, metadata: { total_scored, avg_overall, avg_relevance, avg_correctness, avg_quality, avg_security, by_skill } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_insights",
-          description: "Get actionable insights and optimization suggestions.",
+          description: "Get actionable insights and optimization suggestions. Returns: { status, summary, metadata: { focus, insights: string[] } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -112,7 +115,7 @@ class AnalyticsServer {
         },
         {
           name: "check_budget",
-          description: "Check if an operation is within budget with rate limiting.",
+          description: "Check if an operation is within budget with rate limiting. Returns: { status: 'success'|'budget_exceeded'|'rate_limited', metadata: { budget: { allowed, today_spend, operation_cost, projected_total, daily_limit }, rate_limit } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -126,7 +129,7 @@ class AnalyticsServer {
         // New v2 tools
         {
           name: "get_performance_profile",
-          description: "Get operation timing profile with p50/p95/p99 percentiles.",
+          description: "Get operation timing profile with p50/p95/p99 percentiles. Returns: { status, metadata: { total_operations, avg_duration_ms, operations: OperationProfile[] } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -136,22 +139,22 @@ class AnalyticsServer {
         },
         {
           name: "system_health",
-          description: "Check system component health (disk, git, index, budget, database).",
+          description: "Check system component health (disk, git, index, budget, database). Returns: { status, metadata: { overall_status: 'healthy'|'degraded'|'unhealthy', components, alerts, recommendations } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_skill_effectiveness",
-          description: "Analyze which skill files produce the best results.",
+          description: "Analyze which skill files produce the best results. Returns: { status, metadata: { skills: Array<{ name, usage_count, avg_score_when_used, effectiveness }>, baseline_avg } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "predict_monthly_cost",
-          description: "Predict monthly cost based on recent trends.",
+          description: "Predict monthly cost based on recent trends. Returns: { status, metadata: { predicted_usd, range_low_usd, range_high_usd, confidence, trends: { increasing, rate_of_change } } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
         {
           name: "get_bottlenecks",
-          description: "Identify slow operations that exceed a duration threshold.",
+          description: "Identify slow operations exceeding a duration threshold. Returns: { status, metadata: { threshold_ms, bottlenecks: Array<{ operation, avg_duration_ms, occurrences, impact }> } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -161,7 +164,7 @@ class AnalyticsServer {
         },
         {
           name: "export_analytics",
-          description: "Export analytics data as JSON.",
+          description: "Export analytics data as JSON. Returns: { status, metadata: { export_file, sections, size_bytes } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -175,7 +178,7 @@ class AnalyticsServer {
         },
         {
           name: "set_rate_limit",
-          description: "Configure rate limits for an operation.",
+          description: "Configure rate limits for an operation. Returns: { status, metadata: { operation, per_minute, per_hour, per_day } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -189,8 +192,33 @@ class AnalyticsServer {
         },
         {
           name: "get_rate_limit_status",
-          description: "Get current rate limit configuration and usage.",
+          description: "Get current rate limit configuration and usage. Returns: { status, metadata: { rate_limits: Array<{ operation, per_minute?, per_hour?, per_day? }> } }",
           inputSchema: { type: "object" as const, properties: {} },
+        },
+        // --- New v2.1 tools ---
+        {
+          name: "log_research_outcome",
+          description: "Log whether research-based implementation worked in practice. Updates research confidence based on real-world outcomes.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              research_id: { type: "string", description: "Research ID" },
+              implementation_file: { type: "string", description: "File that was implemented" },
+              outcome: { type: "string", enum: ["success", "partial", "failed"], description: "How well research predictions matched reality" },
+              metrics: {
+                type: "object",
+                properties: {
+                  expected_sharpe: { type: "number" },
+                  actual_sharpe: { type: "number" },
+                  expected_drawdown: { type: "number" },
+                  actual_drawdown: { type: "number" },
+                  notes: { type: "string" },
+                },
+                description: "Performance metrics comparing expected vs actual",
+              },
+            },
+            required: ["research_id", "implementation_file", "outcome"],
+          },
         },
       ],
     }));
@@ -215,29 +243,7 @@ class AnalyticsServer {
 
       switch (name) {
         case "efficiency_rules":
-          return {
-            description: "Core Antigravity OS efficiency rules",
-            messages: [{
-              role: "user" as const,
-              content: {
-                type: "text" as const,
-                text: [
-                  "# Antigravity OS Efficiency Rules",
-                  "",
-                  "1. **Check memory before starting** — Always read active context first",
-                  "2. **Log decisions immediately** — Use memory_log_decision for architecture choices",
-                  "3. **Log lessons as they happen** — Use memory_log_lesson for bugs and patterns",
-                  "4. **Monitor costs** — Check budget before expensive operations",
-                  "5. **Use skill files** — Build reusable prompts, don't repeat specs",
-                  "6. **Detect loops** — Stop after 3 failures and analyze",
-                  "7. **Batch operations** — Use batch_execute for related tasks",
-                  "8. **Cache responses** — Reuse validated results",
-                  "9. **Review health** — Run system_health periodically",
-                  "10. **Export analytics** — Track trends with export_analytics",
-                ].join("\n"),
-              },
-            }],
-          };
+          return getEfficiencyRulesPrompt();
 
         case "cost_awareness":
           return {
@@ -312,6 +318,7 @@ class AnalyticsServer {
       case "export_analytics": return await this.handleExportAnalytics(args);
       case "set_rate_limit": return await this.handleSetRateLimit(args);
       case "get_rate_limit_status": return await this.handleGetRateLimitStatus();
+      case "log_research_outcome": return await this.handleLogResearchOutcome(args);
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -322,6 +329,14 @@ class AnalyticsServer {
   // =========================================================================
 
   private async handleLogCost(args: any) {
+    new InputValidator("log_cost", args)
+      .requireString("agent")
+      .requireNumber("tokens")
+      .requireNumber("cost_usd")
+      .requireString("task_description")
+      .optionalNumber("duration_ms")
+      .validate();
+
     const agent: string = args.agent;
     const tokens: number = args.tokens;
     const costUsd: number = args.cost_usd;
@@ -408,7 +423,7 @@ class AnalyticsServer {
 
     try {
       const data = await fs.readFile(scoresPath, "utf-8");
-      scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      scores = parseJsonl<typeof scores[number]>(data).entries;
     } catch { /* no scores yet */ }
 
     if (scores.length === 0) {
@@ -485,7 +500,7 @@ class AnalyticsServer {
       const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
       try {
         const data = await fs.readFile(scoresPath, "utf-8");
-        const scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+        const scores = parseJsonl<{ overall: number }>(data).entries;
         if (scores.length > 0) {
           const recent = scores.slice(-10);
           const avgScore = recent.reduce((s: number, e: any) => s + e.overall, 0) / recent.length;
@@ -509,6 +524,12 @@ class AnalyticsServer {
   }
 
   private async handleCheckBudget(args: any) {
+    new InputValidator("check_budget", args)
+      .requireNumber("estimated_tokens")
+      .requireString("agent")
+      .optionalString("operation")
+      .validate();
+
     const estimatedTokens: number = args.estimated_tokens;
     const agent: string = args.agent;
     const operation: string | undefined = args.operation;
@@ -576,7 +597,7 @@ class AnalyticsServer {
 
     try {
       const data = await fs.readFile(scoresPath, "utf-8");
-      scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      scores = parseJsonl<typeof scores[number]>(data).entries;
     } catch { /* no scores */ }
 
     if (scores.length === 0) {
@@ -743,7 +764,7 @@ class AnalyticsServer {
       const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
       try {
         const data = await fs.readFile(scoresPath, "utf-8");
-        exportData.scores = data.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+        exportData.scores = parseJsonl(data).entries;
       } catch {
         exportData.scores = [];
       }
@@ -773,6 +794,13 @@ class AnalyticsServer {
   }
 
   private async handleSetRateLimit(args: any) {
+    new InputValidator("set_rate_limit", args)
+      .requireString("operation")
+      .optionalNumber("per_minute")
+      .optionalNumber("per_hour")
+      .optionalNumber("per_day")
+      .validate();
+
     const operation: string = args.operation;
     const perMinute: number | undefined = args.per_minute;
     const perHour: number | undefined = args.per_hour;
@@ -805,6 +833,97 @@ class AnalyticsServer {
   }
 
   // =========================================================================
+  // New v2.1 handlers
+  // =========================================================================
+
+  private async handleLogResearchOutcome(args: any) {
+    new InputValidator("log_research_outcome", args)
+      .requireString("research_id")
+      .requireString("implementation_file")
+      .requireEnum("outcome", ["success", "partial", "failed"])
+      .validate();
+
+    const researchId: string = args.research_id;
+    const implementationFile: string = args.implementation_file;
+    const outcome: "success" | "partial" | "failed" = args.outcome;
+    const metrics: Record<string, unknown> = args.metrics || {};
+
+    // Load research metadata
+    const metadataPath = path.join(
+      MEMORY_PATH,
+      "research",
+      "analyses",
+      researchId,
+      "metadata.json",
+    );
+
+    let metadata: any;
+    try {
+      const metaRaw = await fs.readFile(metadataPath, "utf-8");
+      metadata = JSON.parse(metaRaw);
+    } catch {
+      return respondError(`Research not found: ${researchId}`);
+    }
+
+    // Add outcome
+    if (!metadata.outcomes) metadata.outcomes = [];
+    metadata.outcomes.push({
+      file: implementationFile,
+      outcome,
+      metrics,
+      logged_at: new Date().toISOString(),
+    });
+
+    // Update counters
+    if (outcome === "success") {
+      metadata.validation_count = (metadata.validation_count || 0) + 1;
+    } else if (outcome === "failed") {
+      metadata.contradiction_count = (metadata.contradiction_count || 0) + 1;
+    }
+
+    // Recalculate confidence
+    const successes = metadata.outcomes.filter((o: any) => o.outcome === "success").length;
+    const failures = metadata.outcomes.filter((o: any) => o.outcome === "failed").length;
+    const total = metadata.outcomes.length;
+    const successRate = successes / total;
+    const failureRate = failures / total;
+    metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
+
+    // Save updated metadata
+    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+
+    // Log to research_outcomes.jsonl
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      research_id: researchId,
+      implementation_file: implementationFile,
+      outcome,
+      metrics,
+      confidence_after: metadata.confidence,
+    };
+
+    const logPath = path.join(MEMORY_PATH, "snapshots", "research_outcomes.jsonl");
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+
+    return respond({
+      status: "success",
+      operation: "log_research_outcome",
+      summary: `Logged ${outcome} outcome for research "${metadata.title || researchId}"`,
+      metadata: {
+        research_id: researchId,
+        title: metadata.title || researchId,
+        new_confidence: metadata.confidence,
+        total_outcomes: metadata.outcomes.length,
+        success_rate: parseFloat((successes / total).toFixed(2)),
+        implementation_file: implementationFile,
+        outcome,
+        metrics,
+      },
+    });
+  }
+
+  // =========================================================================
   // Server lifecycle
   // =========================================================================
 
@@ -816,7 +935,7 @@ class AnalyticsServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("[analytics-server] v2.0.0 Running on stdio (13 tools + 2 prompts)");
+    log.info("Running on stdio", { tools: 14, prompts: 2, version: "2.1.0" });
   }
 }
 

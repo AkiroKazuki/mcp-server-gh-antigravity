@@ -18,6 +18,10 @@ import { FileLockManager } from "./lock-manager.js";
 import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
+import { Logger } from "@antigravity-os/shared";
+import { ResearchImporter } from "./research-importer.js";
+
+const log = new Logger("memory-server");
 
 // --- Configuration ---
 
@@ -26,7 +30,7 @@ const MEMORY_DIR = process.env.MEMORY_DIR || ".memory";
 const MEMORY_PATH = path.join(PROJECT_ROOT, MEMORY_DIR);
 const DB_PATH = path.join(MEMORY_PATH, "antigravity.db");
 
-const FILE_MAP: Record<string, string> = {
+const FILE_MAP = {
   tech_stack: "core/tech_stack.md",
   project_overview: "core/project_overview.md",
   architecture: "core/architecture.md",
@@ -37,16 +41,29 @@ const FILE_MAP: Record<string, string> = {
   best_practices: "lessons/best_practices.md",
   bugs_fixed: "lessons/bugs_fixed.md",
   anti_patterns: "lessons/anti_patterns.md",
-};
+} as const;
 
-const CATEGORY_DIRS: Record<string, string> = {
+type FileKey = keyof typeof FILE_MAP;
+const VALID_FILE_KEYS = Object.keys(FILE_MAP) as FileKey[];
+
+const CATEGORY_DIRS = {
   decisions: "decisions",
   lessons: "lessons",
   core: "core",
   active: "active",
   patterns: "lessons",
   all: "",
-};
+} as const;
+
+type CategoryKey = keyof typeof CATEGORY_DIRS;
+
+function getFilePath(key: string): string | undefined {
+  return (FILE_MAP as Record<string, string>)[key];
+}
+
+function getCategoryDir(key: string): string | undefined {
+  return (CATEGORY_DIRS as Record<string, string>)[key];
+}
 
 // --- Helpers ---
 
@@ -71,21 +88,25 @@ class MemoryServer {
   private git: GitPersistence;
   private semantic: SemanticSearch;
   private temporal: TemporalMemory;
+  private research: ResearchImporter;
+  private idempotencyCache: Map<string, { result: unknown; timestamp: number }> = new Map();
+  private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-memory", version: "2.0.0" },
+      { name: "antigravity-memory", version: "2.1.0" },
       { capabilities: { tools: {} } }
     );
     this.lockManager = new FileLockManager();
     this.git = new GitPersistence(MEMORY_PATH);
     this.semantic = new SemanticSearch(MEMORY_PATH);
     this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
+    this.research = new ResearchImporter(MEMORY_PATH);
 
     this.setupToolHandlers();
 
     this.server.onerror = (error) => {
-      console.error("[memory-server] Error:", error);
+      log.error("Server error", { error: String(error) });
     };
   }
 
@@ -115,7 +136,7 @@ class MemoryServer {
         },
         {
           name: "memory_read",
-          description: "Read a specific memory file by name. Includes confidence data for matching entries.",
+          description: "Read a specific memory file by name. Returns full content (no summaries unless >5000 lines). Includes confidence data.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -123,6 +144,10 @@ class MemoryServer {
                 type: "string",
                 enum: Object.keys(FILE_MAP),
                 description: "Memory file to read",
+              },
+              chunk: {
+                type: "number",
+                description: "Chunk index for files >5000 lines (default: 0)",
               },
             },
             required: ["file"],
@@ -144,7 +169,7 @@ class MemoryServer {
         },
         {
           name: "memory_log_decision",
-          description: "Log a structured architectural decision with confidence tracking.",
+          description: "Log a structured architectural decision with confidence tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -153,13 +178,14 @@ class MemoryServer {
               why: { type: "string", description: "Reasoning (2-3 sentences)" },
               alternatives: { type: "array", items: { type: "string" }, description: "Options considered" },
               impact: { type: "string", description: "What this changes" },
+              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
             },
             required: ["title", "what", "why"],
           },
         },
         {
           name: "memory_log_lesson",
-          description: "Log a bug fix, pattern, or anti-pattern with validation tracking.",
+          description: "Log a bug fix, pattern, or anti-pattern with validation tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -170,6 +196,7 @@ class MemoryServer {
               root_cause: { type: "string", description: "Why it happened" },
               fix: { type: "string", description: "How we fixed it" },
               prevention: { type: "string", description: "How to avoid in future" },
+              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
             },
             required: ["category", "type", "title"],
           },
@@ -307,6 +334,34 @@ class MemoryServer {
             },
           },
         },
+        // --- New v2.1 tools ---
+        {
+          name: "import_research_analysis",
+          description: "Import markdown analysis from Claude Sonnet research session. Intelligently parses sections and structures into memory categories. Handles variable markdown formats.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              markdown_content: { type: "string", description: "Full markdown content from Sonnet (.md file content)" },
+              title: { type: "string", description: "Research title (e.g., 'Mean Reversion EUR/USD Analysis')" },
+              tags: { type: "array", items: { type: "string" }, description: "Tags for categorization (e.g., ['mean-reversion', 'EUR/USD'])" },
+              source: { type: "string", description: "Source reference (e.g., 'Journal of Finance 2024')" },
+            },
+            required: ["markdown_content", "title"],
+          },
+        },
+        {
+          name: "get_research_context",
+          description: "Get specific research sections for implementation. Returns full content (no summaries) for use in Copilot prompts.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              research_id: { type: "string", description: "Research ID from import_research_analysis" },
+              sections: { type: "array", items: { type: "string" }, description: "Sections to retrieve (e.g., ['implementation', 'findings']). Omit for all." },
+              specific_topic: { type: "string", description: "Optional: Extract only content related to specific topic (e.g., 'stop loss')" },
+            },
+            required: ["research_id"],
+          },
+        },
       ],
     }));
 
@@ -332,6 +387,8 @@ class MemoryServer {
           case "suggest_pruning": return await this.handleSuggestPruning(args);
           case "apply_pruning": return await this.handleApplyPruning(args);
           case "memory_undo": return await this.handleUndo(args);
+          case "import_research_analysis": return await this.handleImportResearch(args);
+          case "get_research_context": return await this.handleGetResearchContext(args);
           default:
             return respondError(`Unknown tool: ${name}`);
         }
@@ -413,8 +470,8 @@ class MemoryServer {
     const searchDirs = categories.includes("all")
       ? [MEMORY_PATH]
       : categories
-        .map((c) => CATEGORY_DIRS[c])
-        .filter(Boolean)
+        .map((c) => getCategoryDir(c))
+        .filter((d): d is string => Boolean(d))
         .map((d) => path.join(MEMORY_PATH, d));
 
     const results: Array<{ file: string; preview: string; matches: number; category: string }> = [];
@@ -460,7 +517,7 @@ class MemoryServer {
 
   private async handleRead(args: any) {
     const fileKey: string = args.file;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) {
       return respondError(`Unknown file: ${fileKey}. Available: ${Object.keys(FILE_MAP).join(", ")}`);
     }
@@ -468,6 +525,7 @@ class MemoryServer {
     const fullPath = path.join(MEMORY_PATH, relPath);
     try {
       const content = await fs.readFile(fullPath, "utf-8");
+      const lineCount = content.split("\n").length;
 
       // Attach confidence data for entries matching this file
       const entries = this.temporal.getAllEntries();
@@ -476,17 +534,47 @@ class MemoryServer {
         ? fileEntries.reduce((sum, e) => sum + e.confidence, 0) / fileEntries.length
         : null;
 
-      return respond({
-        status: "success",
-        operation: "memory_read",
-        summary: `Read ${relPath} (${content.split("\n").length} lines)`,
-        metadata: {
-          file: relPath,
-          content,
-          confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
-          tracked_entries: fileEntries.length,
-        },
-      });
+      // v2.1: Return full content for files <5000 lines, chunk for larger
+      if (lineCount <= 5000) {
+        return respond({
+          status: "success",
+          operation: "memory_read",
+          summary: `Read ${relPath} (${lineCount} lines, full content)`,
+          metadata: {
+            file: relPath,
+            content,
+            line_count: lineCount,
+            confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
+            tracked_entries: fileEntries.length,
+          },
+        });
+      } else {
+        // Chunk large files
+        const lines = content.split("\n");
+        const chunkSize = 5000;
+        const totalChunks = Math.ceil(lines.length / chunkSize);
+        const chunk = args.chunk ?? 0;
+        const start = chunk * chunkSize;
+        const end = Math.min(start + chunkSize, lines.length);
+        const chunkContent = lines.slice(start, end).join("\n");
+
+        return respond({
+          status: "success",
+          operation: "memory_read",
+          summary: `Read ${relPath} chunk ${chunk + 1}/${totalChunks} (${lineCount} total lines)`,
+          metadata: {
+            file: relPath,
+            content: chunkContent,
+            line_count: lineCount,
+            chunk: chunk,
+            total_chunks: totalChunks,
+            chunk_lines: end - start,
+            confidence: confidence !== null ? parseFloat(confidence.toFixed(3)) : "no_entries",
+            tracked_entries: fileEntries.length,
+            note: `Content split into ${totalChunks} chunks. Use memory_read with chunk parameter to read more.`,
+          },
+        });
+      }
     } catch {
       return respondError(`File not found: ${relPath}. Create it first by using memory_update with operation "replace".`);
     }
@@ -498,7 +586,7 @@ class MemoryServer {
     const content: string = args.content;
     const section: string | undefined = args.section;
 
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -567,6 +655,12 @@ class MemoryServer {
   }
 
   private async handleLogDecision(args: any) {
+    // Idempotency check
+    if (args.idempotency_key) {
+      const cached = this.checkIdempotency(args.idempotency_key);
+      if (cached) return cached;
+    }
+
     const date = new Date().toISOString().split("T")[0];
     const entry = [
       `\n## ${date}: ${args.title}`,
@@ -601,16 +695,27 @@ class MemoryServer {
       );
       this.temporal.logOperation("memory_log_decision", "decisions/ACTIVE.md", commitHash ?? undefined, tEntry.id, args.title);
 
-      return respond({
+      const result = respond({
         status: "success",
         operation: "memory_log_decision",
         summary: `Logged decision: ${args.title}`,
         metadata: { decision: args.title, date, file: "decisions/ACTIVE.md", entry_id: tEntry.id, confidence: tEntry.confidence },
       });
+
+      if (args.idempotency_key) {
+        this.storeIdempotency(args.idempotency_key, result);
+      }
+      return result;
     });
   }
 
   private async handleLogLesson(args: any) {
+    // Idempotency check
+    if (args.idempotency_key) {
+      const cached = this.checkIdempotency(args.idempotency_key);
+      if (cached) return cached;
+    }
+
     const typeFileMap: Record<string, string> = {
       bug: "lessons/bugs_fixed.md",
       pattern: "lessons/best_practices.md",
@@ -654,12 +759,17 @@ class MemoryServer {
       );
       this.temporal.logOperation("memory_log_lesson", relPath, commitHash ?? undefined, tEntry.id, args.title);
 
-      return respond({
+      const result = respond({
         status: "success",
         operation: "memory_log_lesson",
         summary: `Logged ${args.type}: ${args.title}`,
         metadata: { type: args.type, category: args.category, title: args.title, file: relPath, entry_id: tEntry.id },
       });
+
+      if (args.idempotency_key) {
+        this.storeIdempotency(args.idempotency_key, result);
+      }
+      return result;
     });
   }
 
@@ -716,7 +826,7 @@ class MemoryServer {
     const summary: Record<string, any> = {};
 
     const extractSummary = async (fileKey: string): Promise<string | null> => {
-      const relPath = FILE_MAP[fileKey];
+      const relPath = getFilePath(fileKey);
       if (!relPath) return null;
       try {
         const content = await fs.readFile(path.join(MEMORY_PATH, relPath), "utf-8");
@@ -760,7 +870,7 @@ class MemoryServer {
   private async handleHistory(args: any) {
     const fileKey: string = args.file;
     const limit: number = args.limit || 10;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -777,7 +887,7 @@ class MemoryServer {
   private async handleRollback(args: any) {
     const fileKey: string = args.file;
     const commitHash: string = args.commit_hash;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -798,7 +908,7 @@ class MemoryServer {
   private async handleDiff(args: any) {
     const fileKey: string = args.file;
     const commitHash: string | undefined = args.commit_hash;
-    const relPath = FILE_MAP[fileKey];
+    const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
     const fullPath = path.join(MEMORY_PATH, relPath);
@@ -824,7 +934,7 @@ class MemoryServer {
     try {
       semanticResult = await this.semantic.indexMemory();
     } catch (err: any) {
-      console.error(`[memory-server] Semantic indexing failed: ${err.message}`);
+      log.warn("Semantic indexing failed", { error: err.message });
     }
 
     return respond({
@@ -1082,6 +1192,95 @@ class MemoryServer {
   }
 
   // =========================================================================
+  // New v2.1 handlers
+  // =========================================================================
+
+  private async handleImportResearch(args: any) {
+    const { markdown_content, title, tags, source } = args;
+
+    if (!markdown_content || !title) {
+      return respondError("markdown_content and title are required");
+    }
+
+    const result = await this.research.importResearch({
+      markdown_content,
+      title,
+      tags,
+      source,
+    });
+
+    // Git commit the research import
+    await this.git.commitAll("IMPORT", `Imported research: ${title}`);
+    const commitHash = await this.git.getLatestCommitHash();
+
+    // Create temporal entry for the research
+    const tEntry = this.temporal.createEntry(
+      `Research: ${title}`,
+      `research/analyses/${result.researchId}/metadata.json`,
+      "research",
+      title,
+      tags || [],
+    );
+
+    this.temporal.logOperation(
+      "import_research_analysis",
+      `research/analyses/${result.researchId}`,
+      commitHash ?? undefined,
+      tEntry.id,
+      `Imported: ${title}`,
+    );
+
+    return respond({
+      status: "success",
+      operation: "import_research_analysis",
+      summary: `Imported "${title}" with ${result.sections.length} structured sections`,
+      metadata: {
+        research_id: result.researchId,
+        sections_found: result.sections,
+        location: path.relative(MEMORY_PATH, result.researchDir),
+        title,
+        tags: tags || [],
+        source: source || "Unknown",
+        confidence: result.metadata.confidence,
+        entry_id: tEntry.id,
+      },
+    });
+  }
+
+  private async handleGetResearchContext(args: any) {
+    const { research_id, sections, specific_topic } = args;
+
+    if (!research_id) {
+      return respondError("research_id is required");
+    }
+
+    try {
+      const result = await this.research.getResearchContext({
+        research_id,
+        sections,
+        specific_topic,
+      });
+
+      return respond({
+        status: "success",
+        operation: "get_research_context",
+        summary: `Retrieved ${Object.keys(result.content).length} sections for "${result.title}" (${result.full_content_length} chars)`,
+        metadata: {
+          research_id: result.research_id,
+          title: result.title,
+          source: result.source,
+          tags: result.tags,
+          content: result.content,
+          full_content_length: result.full_content_length,
+          sections_returned: Object.keys(result.content),
+        },
+      });
+    } catch (error: any) {
+      return respondError(`Research not found: ${research_id}. Error: ${error.message}`);
+    }
+  }
+
+  // =========================================================================
   // Utilities
   // =========================================================================
 
@@ -1093,9 +1292,32 @@ class MemoryServer {
     return "other";
   }
 
+  private checkIdempotency(key: string): unknown | null {
+    const entry = this.idempotencyCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+      this.idempotencyCache.delete(key);
+      return null;
+    }
+    return entry.result;
+  }
+
+  private storeIdempotency(key: string, result: unknown): void {
+    this.idempotencyCache.set(key, { result, timestamp: Date.now() });
+    // Prune expired entries periodically
+    if (this.idempotencyCache.size > 100) {
+      const now = Date.now();
+      for (const [k, v] of this.idempotencyCache) {
+        if (now - v.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+          this.idempotencyCache.delete(k);
+        }
+      }
+    }
+  }
+
   async run() {
     // Ensure memory directories exist
-    const dirs = ["core", "active", "decisions", "decisions/archive", "lessons", "prompts/templates", "prompts/generated", "snapshots", "config"];
+    const dirs = ["core", "active", "decisions", "decisions/archive", "lessons", "prompts/templates", "prompts/generated", "snapshots", "config", "research/analyses", "research/outcomes"];
     for (const dir of dirs) {
       await fs.mkdir(path.join(MEMORY_PATH, dir), { recursive: true });
     }
@@ -1107,15 +1329,15 @@ class MemoryServer {
     try {
       const synced = await this.temporal.syncFromMarkdown();
       if (synced > 0) {
-        console.error(`[memory-server] Migrated ${synced} entries to v2 format`);
+        log.info("Migrated entries to v2 format", { synced });
       }
     } catch (err: any) {
-      console.error(`[memory-server] Temporal sync warning: ${err.message}`);
+      log.warn("Temporal sync warning", { error: err.message });
     }
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("[memory-server] v2.0.0 Running on stdio (18 tools)");
+    log.info("Running on stdio", { tools: 20, version: "2.1.0" });
   }
 }
 
