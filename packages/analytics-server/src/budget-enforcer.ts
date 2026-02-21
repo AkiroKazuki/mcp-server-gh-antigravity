@@ -28,9 +28,9 @@ interface CostEntry {
 }
 
 const DEFAULT_CONFIG: BudgetConfig = {
-  daily_limit_usd: 2.0,
-  weekly_limit_usd: 10.0,
-  monthly_limit_usd: 30.0,
+  daily_limit_usd: 5.0,
+  weekly_limit_usd: 25.0,
+  monthly_limit_usd: 100.0,
   alert_threshold: 0.8,
   costs: {
     antigravity_input: 0.015,
