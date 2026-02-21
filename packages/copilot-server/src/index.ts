@@ -350,6 +350,8 @@ class CopilotServer {
           case "copilot_cache_stats": return await this.handleCacheStats();
           case "analyze_failure": return await this.handleAnalyzeFailure(args);
           case "suggest_skill_update": return await this.handleSuggestSkillUpdate(args);
+          case "copilot_execute_and_validate": return await this.handleExecuteAndValidate(args);
+          case "implement_with_research_context": return await this.handleImplementWithResearch(args);
           default:
             return respondError(`Unknown tool: ${name}`);
         }
