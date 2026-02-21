@@ -195,6 +195,31 @@ class AnalyticsServer {
           description: "Get current rate limit configuration and usage. Returns: { status, metadata: { rate_limits: Array<{ operation, per_minute?, per_hour?, per_day? }> } }",
           inputSchema: { type: "object" as const, properties: {} },
         },
+        // --- New v2.1 tools ---
+        {
+          name: "log_research_outcome",
+          description: "Log whether research-based implementation worked in practice. Updates research confidence based on real-world outcomes.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              research_id: { type: "string", description: "Research ID" },
+              implementation_file: { type: "string", description: "File that was implemented" },
+              outcome: { type: "string", enum: ["success", "partial", "failed"], description: "How well research predictions matched reality" },
+              metrics: {
+                type: "object",
+                properties: {
+                  expected_sharpe: { type: "number" },
+                  actual_sharpe: { type: "number" },
+                  expected_drawdown: { type: "number" },
+                  actual_drawdown: { type: "number" },
+                  notes: { type: "string" },
+                },
+                description: "Performance metrics comparing expected vs actual",
+              },
+            },
+            required: ["research_id", "implementation_file", "outcome"],
+          },
+        },
       ],
     }));
 
@@ -293,6 +318,7 @@ class AnalyticsServer {
       case "export_analytics": return await this.handleExportAnalytics(args);
       case "set_rate_limit": return await this.handleSetRateLimit(args);
       case "get_rate_limit_status": return await this.handleGetRateLimitStatus();
+      case "log_research_outcome": return await this.handleLogResearchOutcome(args);
       default:
         return respondError(`Unknown tool: ${name}`);
     }
