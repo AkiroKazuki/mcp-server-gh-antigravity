@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.1.0
+
+Research integration upgrade: **47 tools + 4 prompts**. Adds research context integration tools for enhanced decision-making and cross-server research workflow support.
+
+### Memory Server (18 -> 20 tools)
+
+**New tools:**
+- `import_research_analysis` -- import research analysis into memory with confidence scoring
+- `get_research_context` -- retrieve research context for decision-making
+
+### Copilot Server (11 -> 13 tools)
+
+**New tools:**
+- `copilot_execute_and_validate` -- execute and validate in a single operation for streamlined workflow
+- `implement_with_research_context` -- implement code changes with research context integration
+
+### Analytics Server (13 -> 14 tools)
+
+**New tools:**
+- `log_research_outcome` -- log research outcomes and their effectiveness for analytics tracking
+
+---
+
 ## v2.0.0
 
 Major upgrade: 24 tools -> **42 tools + 4 prompts**. Adds temporal memory, response caching, failure analysis, performance profiling, rate limiting, and system health monitoring.
