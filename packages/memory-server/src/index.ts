@@ -136,7 +136,7 @@ class MemoryServer {
         },
         {
           name: "memory_read",
-          description: "Read a specific memory file by name. Includes confidence data for matching entries.",
+          description: "Read a specific memory file by name. Returns full content (no summaries unless >5000 lines). Includes confidence data.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -144,6 +144,10 @@ class MemoryServer {
                 type: "string",
                 enum: Object.keys(FILE_MAP),
                 description: "Memory file to read",
+              },
+              chunk: {
+                type: "number",
+                description: "Chunk index for files >5000 lines (default: 0)",
               },
             },
             required: ["file"],
@@ -1313,7 +1317,7 @@ class MemoryServer {
 
   async run() {
     // Ensure memory directories exist
-    const dirs = ["core", "active", "decisions", "decisions/archive", "lessons", "prompts/templates", "prompts/generated", "snapshots", "config"];
+    const dirs = ["core", "active", "decisions", "decisions/archive", "lessons", "prompts/templates", "prompts/generated", "snapshots", "config", "research/analyses", "research/outcomes"];
     for (const dir of dirs) {
       await fs.mkdir(path.join(MEMORY_PATH, dir), { recursive: true });
     }
