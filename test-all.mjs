@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Smoke test for all Antigravity OS v2.0 MCP servers.
+ * Smoke test for all Antigravity OS v2.1 MCP servers.
  * Spawns each server, sends MCP initialize + tools/list, verifies tool counts.
  */
 
@@ -11,9 +11,9 @@ import { execSync } from "node:child_process";
 import os from "node:os";
 
 const SERVERS = [
-  { name: "memory-server", expectedTools: 18, expectedPrompts: 0, needsGit: true },
-  { name: "copilot-server", expectedTools: 11, expectedPrompts: 2, needsGit: false },
-  { name: "analytics-server", expectedTools: 13, expectedPrompts: 2, needsGit: false },
+  { name: "memory-server", expectedTools: 20, expectedPrompts: 0, needsGit: true },
+  { name: "copilot-server", expectedTools: 13, expectedPrompts: 2, needsGit: false },
+  { name: "analytics-server", expectedTools: 14, expectedPrompts: 2, needsGit: false },
 ];
 
 const ROOT = import.meta.dirname;
@@ -296,7 +296,7 @@ const NEGATIVE_TESTS = {
 
 // --- Main ---
 async function main() {
-  console.log("=== Antigravity OS v2.0 Smoke Tests ===\n");
+  console.log("=== Antigravity OS v2.1 Smoke Tests ===\n");
   console.log("--- Happy Path Tests ---\n");
   let allPass = true;
 
