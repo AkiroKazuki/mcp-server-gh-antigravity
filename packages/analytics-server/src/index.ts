@@ -833,6 +833,97 @@ class AnalyticsServer {
   }
 
   // =========================================================================
+  // New v2.1 handlers
+  // =========================================================================
+
+  private async handleLogResearchOutcome(args: any) {
+    new InputValidator("log_research_outcome", args)
+      .requireString("research_id")
+      .requireString("implementation_file")
+      .requireEnum("outcome", ["success", "partial", "failed"])
+      .validate();
+
+    const researchId: string = args.research_id;
+    const implementationFile: string = args.implementation_file;
+    const outcome: "success" | "partial" | "failed" = args.outcome;
+    const metrics: Record<string, unknown> = args.metrics || {};
+
+    // Load research metadata
+    const metadataPath = path.join(
+      MEMORY_PATH,
+      "research",
+      "analyses",
+      researchId,
+      "metadata.json",
+    );
+
+    let metadata: any;
+    try {
+      const metaRaw = await fs.readFile(metadataPath, "utf-8");
+      metadata = JSON.parse(metaRaw);
+    } catch {
+      return respondError(`Research not found: ${researchId}`);
+    }
+
+    // Add outcome
+    if (!metadata.outcomes) metadata.outcomes = [];
+    metadata.outcomes.push({
+      file: implementationFile,
+      outcome,
+      metrics,
+      logged_at: new Date().toISOString(),
+    });
+
+    // Update counters
+    if (outcome === "success") {
+      metadata.validation_count = (metadata.validation_count || 0) + 1;
+    } else if (outcome === "failed") {
+      metadata.contradiction_count = (metadata.contradiction_count || 0) + 1;
+    }
+
+    // Recalculate confidence
+    const successes = metadata.outcomes.filter((o: any) => o.outcome === "success").length;
+    const failures = metadata.outcomes.filter((o: any) => o.outcome === "failed").length;
+    const total = metadata.outcomes.length;
+    const successRate = successes / total;
+    const failureRate = failures / total;
+    metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
+
+    // Save updated metadata
+    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+
+    // Log to research_outcomes.jsonl
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      research_id: researchId,
+      implementation_file: implementationFile,
+      outcome,
+      metrics,
+      confidence_after: metadata.confidence,
+    };
+
+    const logPath = path.join(MEMORY_PATH, "snapshots", "research_outcomes.jsonl");
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+
+    return respond({
+      status: "success",
+      operation: "log_research_outcome",
+      summary: `Logged ${outcome} outcome for research "${metadata.title || researchId}"`,
+      metadata: {
+        research_id: researchId,
+        title: metadata.title || researchId,
+        new_confidence: metadata.confidence,
+        total_outcomes: metadata.outcomes.length,
+        success_rate: parseFloat((successes / total).toFixed(2)),
+        implementation_file: implementationFile,
+        outcome,
+        metrics,
+      },
+    });
+  }
+
+  // =========================================================================
   // Server lifecycle
   // =========================================================================
 
@@ -844,7 +935,7 @@ class AnalyticsServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 13, prompts: 2, version: "2.0.0" });
+    log.info("Running on stdio", { tools: 14, prompts: 2, version: "2.1.0" });
   }
 }
 
