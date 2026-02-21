@@ -59,10 +59,12 @@ class CopilotServer {
   private contextGatherer: ContextGatherer;
   private failureAnalyzer: FailureAnalyzer;
   private loopDetector: LoopDetector;
+  private cliExecutor: CliExecutor;
+  private researchIntegration: ResearchIntegration;
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-copilot", version: "2.0.0" },
+      { name: "antigravity-copilot", version: "2.1.0" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.validator = new Validator();
@@ -70,6 +72,8 @@ class CopilotServer {
     this.contextGatherer = new ContextGatherer(PROJECT_ROOT);
     this.failureAnalyzer = new FailureAnalyzer();
     this.loopDetector = new LoopDetector();
+    this.cliExecutor = new CliExecutor();
+    this.researchIntegration = new ResearchIntegration(MEMORY_PATH, PROJECT_ROOT);
 
     this.setupHandlers();
 
