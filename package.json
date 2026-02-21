@@ -1,8 +1,28 @@
 {
   "name": "antigravity-os-mcp",
-  "version": "2.0.0",
-  "private": true,
-  "description": "Antigravity OS v2.0 - MCP Server System with Temporal Memory and Intelligence Layer",
+  "version": "2.1.0",
+  "description": "Antigravity OS v2.1 - MCP Server System with Temporal Memory and Intelligence Layer",
+  "author": "AkiroKazuki",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity/issues"
+  },
+  "homepage": "https://github.com/AkiroKazuki/mcp-server-gh-antigravity#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "memory",
+    "claude",
+    "temporal-memory",
+    "semantic-search",
+    "copilot",
+    "analytics"
+  ],
   "workspaces": [
     "packages/shared",
     "packages/*"
