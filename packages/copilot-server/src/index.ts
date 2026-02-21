@@ -825,6 +825,229 @@ class CopilotServer {
   }
 
   // =========================================================================
+  // New v2.1 handlers
+  // =========================================================================
+
+  private async handleExecuteAndValidate(args: any) {
+    new InputValidator("copilot_execute_and_validate", args)
+      .requireString("prompt_file")
+      .requireString("output_file")
+      .optionalArray("requirements")
+      .validate();
+
+    const promptFile: string = args.prompt_file;
+    const outputFile: string = args.output_file;
+    const requirements: string[] = args.requirements || [];
+    const autoApprove: boolean = args.auto_approve_if_valid ?? false;
+
+    const taskId = `${promptFile}:${outputFile}`;
+
+    // Loop detection
+    this.loopDetector.checkLoop(taskId);
+
+    // Read prompt
+    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
+    let promptContent: string;
+    try {
+      promptContent = await fs.readFile(promptPath, "utf-8");
+    } catch {
+      return respondError(`Prompt file not found: ${promptFile}`);
+    }
+
+    // Check cache
+    const cacheKey = this.cache.generateKey(promptContent, outputFile);
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
+      await fs.mkdir(path.dirname(outPath), { recursive: true });
+      await fs.writeFile(outPath, cached.response, "utf-8");
+
+      // Validate cached code
+      const validation = this.validator.validate(cached.response, requirements);
+
+      return respond({
+        status: "cached",
+        operation: "copilot_execute_and_validate",
+        summary: `Wrote cached result to ${outputFile}`,
+        metadata: {
+          output_file: outputFile,
+          source: "cache",
+          cache_key: cacheKey,
+          hit_count: cached.hit_count,
+          validation: {
+            passed: validation.valid,
+            issues: validation.issues,
+            security_score: validation.security_score,
+            quality_score: validation.quality_score,
+            recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
+          },
+        },
+      });
+    }
+
+    // Execute Copilot CLI
+    log.info("Running copilot_execute_and_validate", { prompt_file: promptFile, output_file: outputFile });
+
+    const result = await this.cliExecutor.execute(promptContent);
+
+    // Write output
+    const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(outPath, result.code, "utf-8");
+
+    // Validate
+    const validation = this.validator.validate(result.code, requirements);
+
+    // Cache if valid
+    if (validation.valid) {
+      this.cache.set(cacheKey, result.code, {
+        task_id: taskId,
+        prompt_file: promptFile,
+        source: result.source,
+      });
+      this.loopDetector.reset(taskId);
+    }
+
+    return respond({
+      status: validation.valid ? "success" : "validation_failed",
+      operation: "copilot_execute_and_validate",
+      summary: validation.valid
+        ? `Generated and validated ${outputFile} (${result.lines_generated} lines)`
+        : `Generated ${outputFile} but validation FAILED`,
+      metadata: {
+        output_file: outputFile,
+        prompt_file: promptFile,
+        source: result.source,
+        lines_generated: result.lines_generated,
+        execution_time_ms: result.execution_time_ms,
+        validation: {
+          passed: validation.valid,
+          issues: validation.issues,
+          security_score: validation.security_score,
+          quality_score: validation.quality_score,
+          recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
+        },
+        preview: result.code.slice(0, 300) + (result.code.length > 300 ? "..." : ""),
+        auto_approved: autoApprove && validation.valid,
+      },
+    });
+  }
+
+  private async handleImplementWithResearch(args: any) {
+    new InputValidator("implement_with_research_context", args)
+      .requireString("research_id")
+      .requireString("task_description")
+      .requireString("file_path")
+      .optionalString("research_section")
+      .optionalString("specific_topic")
+      .optionalString("function_signature")
+      .optionalArray("requirements")
+      .validate();
+
+    const researchId: string = args.research_id;
+    const taskDescription: string = args.task_description;
+    const filePath: string = args.file_path;
+    const researchSection: string | undefined = args.research_section;
+    const specificTopic: string | undefined = args.specific_topic;
+    const functionSignature: string | undefined = args.function_signature;
+    const requirements: string[] = args.requirements || [];
+
+    const steps: Array<{ step: string; [key: string]: unknown }> = [];
+
+    // Step 1: Get research context
+    let researchContext;
+    try {
+      researchContext = await this.researchIntegration.getResearchContext({
+        research_id: researchId,
+        sections: researchSection ? [researchSection] : undefined,
+        specific_topic: specificTopic,
+      });
+      steps.push({ step: "research_loaded", sections: Object.keys(researchContext.content) });
+    } catch (error: any) {
+      return respondError(`Failed to load research ${researchId}: ${error.message}`);
+    }
+
+    // Step 2: Build prompt with research context
+    const researchPrompt = this.researchIntegration.buildResearchPromptSection(researchContext);
+    const additionalContext = await this.researchIntegration.getAdditionalContext();
+
+    const promptParts = [
+      `# Implementation Task`,
+      `## Task: ${taskDescription}`,
+      "",
+      functionSignature ? `## Function Signature\n\`\`\`\n${functionSignature}\n\`\`\`\n` : "",
+      requirements.length > 0 ? `## Requirements\n${requirements.map((r) => `- ${r}`).join("\n")}\n` : "",
+      researchPrompt,
+      additionalContext.tech_stack ? `## Tech Stack\n${additionalContext.tech_stack.slice(0, 2000)}\n` : "",
+      additionalContext.lessons ? `## Relevant Lessons\n${additionalContext.lessons.slice(0, 1000)}\n` : "",
+    ].filter(Boolean).join("\n");
+
+    // Save prompt
+    await fs.mkdir(GENERATED_DIR, { recursive: true });
+    const promptFileName = `prompt_research_${Date.now()}.md`;
+    const promptPath = path.join(GENERATED_DIR, promptFileName);
+    await fs.writeFile(promptPath, promptParts, "utf-8");
+    steps.push({ step: "prompt_generated", file: path.relative(MEMORY_PATH, promptPath) });
+
+    // Step 3: Execute and validate
+    const executionResult = await this.cliExecutor.execute(promptParts);
+
+    const outPath = path.isAbsolute(filePath) ? filePath : path.join(PROJECT_ROOT, filePath);
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(outPath, executionResult.code, "utf-8");
+
+    const validation = this.validator.validate(executionResult.code, requirements);
+    steps.push({
+      step: "executed",
+      source: executionResult.source,
+      lines: executionResult.lines_generated,
+      validation_passed: validation.valid,
+    });
+
+    // Step 4: Link to research if valid
+    if (validation.valid) {
+      await this.researchIntegration.addResearchLink(outPath, researchId, researchContext.title);
+      steps.push({ step: "linked_to_research" });
+
+      // Cache the result
+      const cacheKey = this.cache.generateKey(promptParts, filePath);
+      this.cache.set(cacheKey, executionResult.code, {
+        research_id: researchId,
+        source: executionResult.source,
+      });
+    }
+
+    return respond({
+      status: validation.valid ? "complete" : "needs_review",
+      operation: "implement_with_research_context",
+      summary: validation.valid
+        ? `Implemented "${taskDescription}" using research "${researchContext.title}" (${executionResult.lines_generated} lines)`
+        : `Generated code needs review for "${taskDescription}"`,
+      metadata: {
+        file: filePath,
+        research: {
+          id: researchId,
+          title: researchContext.title,
+          source: researchContext.source,
+        },
+        validation: {
+          passed: validation.valid,
+          issues: validation.issues,
+          security_score: validation.security_score,
+          quality_score: validation.quality_score,
+          recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
+        },
+        execution: {
+          source: executionResult.source,
+          lines_generated: executionResult.lines_generated,
+          execution_time_ms: executionResult.execution_time_ms,
+        },
+        steps,
+      },
+    });
+  }
+
+  // =========================================================================
   // Server lifecycle
   // =========================================================================
 
@@ -835,7 +1058,7 @@ class CopilotServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 11, prompts: 2, version: "2.0.0" });
+    log.info("Running on stdio", { tools: 13, prompts: 2, version: "2.1.0" });
   }
 }
 
