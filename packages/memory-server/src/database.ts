@@ -10,7 +10,7 @@ import Database from 'better-sqlite3';
  * Opens a better-sqlite3 database with WAL mode enabled for performance.
  */
 export function openDatabase(dbPath: string): Database.Database {
-  const db = new Database(dbPath);
+  const db = new Database(dbPath, { timeout: 5000 });
   db.pragma('journal_mode = WAL');
   return db;
 }

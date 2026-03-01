@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import Database from 'better-sqlite3';
 import type { HealthCheckResult, ComponentHealth } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -14,10 +15,12 @@ const execFileAsync = promisify(execFile);
 export class HealthMonitor {
   private projectRoot: string;
   private memoryPath: string;
+  private dbPath: string;
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
     this.memoryPath = path.join(projectRoot, process.env.MEMORY_DIR || '.memory');
+    this.dbPath = path.join(this.memoryPath, 'antigravity.db');
   }
 
   async check(): Promise<HealthCheckResult> {
@@ -194,7 +197,6 @@ export class HealthMonitor {
 
   private async checkBudget(): Promise<ComponentHealth> {
     const configPath = path.join(this.memoryPath, 'config', 'budget.json');
-    const costsPath = path.join(this.memoryPath, 'snapshots', 'costs.jsonl');
 
     try {
       const configData = await fs.readFile(configPath, 'utf-8');
@@ -202,12 +204,12 @@ export class HealthMonitor {
 
       let todaySpend = 0;
       try {
-        const costs = await fs.readFile(costsPath, 'utf-8');
+        const db = new Database(this.dbPath, { timeout: 5000 });
         const today = new Date().toISOString().split('T')[0];
-        const entries = costs.trim().split('\n').filter(Boolean).map((l: string) => JSON.parse(l));
-        todaySpend = entries
-          .filter((e: any) => e.date === today)
-          .reduce((s: number, e: any) => s + (e.cost_usd || 0), 0);
+        const row = db.prepare(
+          `SELECT COALESCE(SUM(cost_usd), 0) as total FROM cost_log WHERE date = ?`
+        ).get(today) as { total: number };
+        todaySpend = row.total;
       } catch { /* no costs yet */ }
 
       const dailyUsage = todaySpend / (config.daily_limit_usd || 2);

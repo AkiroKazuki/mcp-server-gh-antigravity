@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { Validator } from "./validator.js";
 import { CacheManager } from "./cache-manager.js";
 import { ContextGatherer } from "./context-gatherer.js";
@@ -51,6 +52,7 @@ class CopilotServer {
   private server: Server;
   private validator: Validator;
   private cache!: CacheManager;
+  private db!: Database.Database;
   private contextGatherer: ContextGatherer;
   private failureAnalyzer: FailureAnalyzer;
   private loopDetector: LoopDetector;
@@ -385,23 +387,12 @@ class CopilotServer {
     const security = validation.security_score;
     const overall = Math.round((relevance + correctness + quality + security) / 4);
 
-    // Log score for skill effectiveness tracking
-    const scoreLog = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-    const scoreEntry = {
-      timestamp: new Date().toISOString(),
-      file,
-      skill_file: skillFile || null,
-      prompt_file: promptFile || null,
-      overall,
-      relevance,
-      correctness,
-      quality,
-      security,
-    };
-
+    // Log score to SQLite for cross-process safe skill effectiveness tracking
     try {
-      await fs.mkdir(path.dirname(scoreLog), { recursive: true });
-      await fs.appendFile(scoreLog, JSON.stringify(scoreEntry) + "\n");
+      this.db.prepare(
+        `INSERT INTO scores (timestamp, file, skill_file, prompt_file, overall, relevance, correctness, quality, security)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(new Date().toISOString(), file, skillFile || null, promptFile || null, overall, relevance, correctness, quality, security);
     } catch { /* ignore */ }
 
     return respond({
@@ -819,6 +810,22 @@ class CopilotServer {
     await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
 
     this.cache = new CacheManager(DB_PATH);
+    this.db = new Database(DB_PATH, { timeout: 5000 });
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        file TEXT NOT NULL,
+        skill_file TEXT,
+        prompt_file TEXT,
+        overall INTEGER NOT NULL,
+        relevance INTEGER NOT NULL,
+        correctness INTEGER NOT NULL,
+        quality INTEGER NOT NULL,
+        security INTEGER NOT NULL
+      );
+    `);
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);

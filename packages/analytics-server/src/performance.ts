@@ -12,7 +12,7 @@ export class PerformanceProfiler {
   private db: Database.Database;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.db = new Database(dbPath, { timeout: 5000 });
     this.db.pragma('journal_mode = WAL');
     this.initTables();
   }

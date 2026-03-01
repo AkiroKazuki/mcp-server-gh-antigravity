@@ -17,7 +17,7 @@ export class CacheManager {
   constructor(dbPath: string, defaultTtlHours?: number) {
     this.defaultTtlHours = defaultTtlHours ?? 24;
 
-    this.db = new Database(dbPath);
+    this.db = new Database(dbPath, { timeout: 5000 });
     this.db.pragma('journal_mode = WAL');
 
     this.db.exec(`

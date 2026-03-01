@@ -1057,7 +1057,7 @@ class MemoryServer {
     this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
 
     // Initialize idempotency cache in SQLite (survives restarts)
-    this.idempotencyDb = new Database(DB_PATH);
+    this.idempotencyDb = new Database(DB_PATH, { timeout: 5000 });
     this.idempotencyDb.exec(`
       CREATE TABLE IF NOT EXISTS idempotency_cache (
         key TEXT PRIMARY KEY,

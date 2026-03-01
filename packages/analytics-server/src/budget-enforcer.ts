@@ -61,7 +61,7 @@ export class BudgetEnforcer {
         process.env.MEMORY_DIR || ".memory",
         "antigravity.db"
       );
-      this.db = new Database(dbPath);
+      this.db = new Database(dbPath, { timeout: 5000 });
       this.db.pragma('journal_mode = WAL');
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS rate_limits (
@@ -249,16 +249,11 @@ export class BudgetEnforcer {
   }
 
   async readCostLog(): Promise<CostEntry[]> {
-    const logFile = path.join(
-      this.projectRoot,
-      ".memory",
-      "snapshots",
-      "costs.jsonl"
-    );
-
     try {
-      const content = await fs.readFile(logFile, "utf-8");
-      return parseJsonl<CostEntry>(content).entries;
+      const db = this.getDb();
+      return db.prepare(
+        `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log ORDER BY rowid`
+      ).all() as CostEntry[];
     } catch {
       return [];
     }

@@ -15,10 +15,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
-import { getEfficiencyRulesPrompt, Logger, parseJsonl, respond, respondError, withToolHandler, FileLockManager } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, parseJsonl, respond, respondError, withToolHandler } from "@antigravity-os/shared";
 import {
   LogCostSchema, GetCostSummarySchema, GetInsightsSchema,
   CheckBudgetSchema, GetPerformanceProfileSchema, GetBottlenecksSchema,
@@ -45,7 +46,7 @@ class AnalyticsServer {
   private budget: BudgetEnforcer;
   private profiler!: PerformanceProfiler;
   private health: HealthMonitor;
-  private lockManager: FileLockManager;
+  private db!: Database.Database;
 
   constructor() {
     this.server = new Server(
@@ -54,7 +55,6 @@ class AnalyticsServer {
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
     this.health = new HealthMonitor(PROJECT_ROOT);
-    this.lockManager = new FileLockManager();
 
     this.setupHandlers();
 
@@ -181,12 +181,11 @@ class AnalyticsServer {
       timestamp,
     };
 
-    // Write to costs.jsonl
-    const costLogPath = path.join(MEMORY_PATH, "snapshots", "costs.jsonl");
-    await fs.mkdir(path.dirname(costLogPath), { recursive: true });
-    await this.lockManager.withLock(costLogPath, async () => {
-      await fs.appendFile(costLogPath, JSON.stringify(entry) + "\n");
-    });
+    // Write to cost_log table
+    this.db.prepare(
+      `INSERT INTO cost_log (date, agent, tokens, cost_usd, task_description, timestamp, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(today, agent, tokens, costUsd, taskDescription ?? null, timestamp, durationMs ?? null);
 
     // Log timing
     if (durationMs !== undefined) {
@@ -236,23 +235,13 @@ class AnalyticsServer {
   }
 
   private async handleGetCopilotPerformance() {
-    // Read scores log
-    const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-    let scores: Array<{
-      timestamp: string;
-      file: string;
-      skill_file: string | null;
-      overall: number;
-      relevance: number;
-      correctness: number;
-      quality: number;
-      security: number;
-    }> = [];
-
-    try {
-      const data = await fs.readFile(scoresPath, "utf-8");
-      scores = parseJsonl<typeof scores[number]>(data).entries;
-    } catch { /* no scores yet */ }
+    // Read scores from SQLite
+    const scores = this.db.prepare(
+      `SELECT timestamp, file, skill_file, overall, relevance, correctness, quality, security FROM scores`
+    ).all() as Array<{
+      timestamp: string; file: string; skill_file: string | null;
+      overall: number; relevance: number; correctness: number; quality: number; security: number;
+    }>;
 
     if (scores.length === 0) {
       return respond({
@@ -325,20 +314,17 @@ class AnalyticsServer {
 
     // Quality insights
     if (focus === "all" || focus === "quality") {
-      const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-      try {
-        const data = await fs.readFile(scoresPath, "utf-8");
-        const scores = parseJsonl<{ overall: number }>(data).entries;
-        if (scores.length > 0) {
-          const recent = scores.slice(-10);
-          const avgScore = recent.reduce((s: number, e: any) => s + e.overall, 0) / recent.length;
-          if (avgScore < 50) {
-            insights.push(`Quality alert: Recent avg score ${avgScore.toFixed(0)}/100. Review skill files.`);
-          } else {
-            insights.push(`Quality trend: Recent avg score ${avgScore.toFixed(0)}/100.`);
-          }
+      const scores = this.db.prepare(
+        `SELECT overall FROM scores ORDER BY rowid DESC LIMIT 10`
+      ).all() as Array<{ overall: number }>;
+      if (scores.length > 0) {
+        const avgScore = scores.reduce((s, e) => s + e.overall, 0) / scores.length;
+        if (avgScore < 50) {
+          insights.push(`Quality alert: Recent avg score ${avgScore.toFixed(0)}/100. Review skill files.`);
+        } else {
+          insights.push(`Quality trend: Recent avg score ${avgScore.toFixed(0)}/100.`);
         }
-      } catch {
+      } else {
         insights.push("No quality data available. Score outputs with copilot_score to start tracking.");
       }
     }
@@ -412,13 +398,9 @@ class AnalyticsServer {
   }
 
   private async handleGetSkillEffectiveness() {
-    const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-    let scores: Array<{ skill_file: string | null; overall: number }> = [];
-
-    try {
-      const data = await fs.readFile(scoresPath, "utf-8");
-      scores = parseJsonl<typeof scores[number]>(data).entries;
-    } catch { /* no scores */ }
+    const scores = this.db.prepare(
+      `SELECT skill_file, overall FROM scores`
+    ).all() as Array<{ skill_file: string | null; overall: number }>;
 
     if (scores.length === 0) {
       return respond({
@@ -581,13 +563,7 @@ class AnalyticsServer {
     }
 
     if (include.includes("scores")) {
-      const scoresPath = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-      try {
-        const data = await fs.readFile(scoresPath, "utf-8");
-        exportData.scores = parseJsonl(data).entries;
-      } catch {
-        exportData.scores = [];
-      }
+      exportData.scores = this.db.prepare(`SELECT * FROM scores`).all();
     }
 
     if (include.includes("health")) {
@@ -599,9 +575,7 @@ class AnalyticsServer {
     await fs.mkdir(exportDir, { recursive: true });
     const exportFile = `analytics_export_${Date.now()}.json`;
     const exportPath = path.join(exportDir, exportFile);
-    await this.lockManager.withLock(exportPath, async () => {
-      await fs.writeFile(exportPath, JSON.stringify(exportData, null, 2), "utf-8");
-    });
+    await fs.writeFile(exportPath, JSON.stringify(exportData, null, 2), "utf-8");
 
     return respond({
       status: "success",
@@ -694,25 +668,16 @@ class AnalyticsServer {
     metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
 
     // Save updated metadata
-    await this.lockManager.withLock(metadataPath, async () => {
-      await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
-    });
+    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
 
-    // Log to research_outcomes.jsonl
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      research_id: researchId,
-      implementation_file: implementationFile,
-      outcome,
-      metrics,
-      confidence_after: metadata.confidence,
-    };
-
-    const logPath = path.join(MEMORY_PATH, "snapshots", "research_outcomes.jsonl");
-    await fs.mkdir(path.dirname(logPath), { recursive: true });
-    await this.lockManager.withLock(logPath, async () => {
-      await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
-    });
+    // Log to research_outcomes table
+    this.db.prepare(
+      `INSERT INTO research_outcomes (timestamp, research_id, implementation_file, outcome, metrics, confidence_after)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      new Date().toISOString(), researchId, implementationFile, outcome,
+      metrics ? JSON.stringify(metrics) : null, metadata.confidence
+    );
 
     return respond({
       status: "success",
@@ -738,6 +703,43 @@ class AnalyticsServer {
   async run() {
     await fs.mkdir(path.join(MEMORY_PATH, "snapshots"), { recursive: true });
     await fs.mkdir(path.join(MEMORY_PATH, "config"), { recursive: true });
+
+    // Initialize shared SQLite database for analytics data
+    this.db = new Database(DB_PATH, { timeout: 5000 });
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cost_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        cost_usd REAL NOT NULL,
+        task_description TEXT,
+        timestamp TEXT NOT NULL,
+        duration_ms REAL
+      );
+      CREATE TABLE IF NOT EXISTS scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        file TEXT NOT NULL,
+        skill_file TEXT,
+        prompt_file TEXT,
+        overall INTEGER NOT NULL,
+        relevance INTEGER NOT NULL,
+        correctness INTEGER NOT NULL,
+        quality INTEGER NOT NULL,
+        security INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        research_id TEXT NOT NULL,
+        implementation_file TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        metrics TEXT,
+        confidence_after REAL
+      );
+    `);
 
     this.profiler = new PerformanceProfiler(DB_PATH);
 
