@@ -24,8 +24,9 @@ export async function handleImplementWithResearch(ctx: CopilotContext, args: Imp
       specific_topic: specificTopic,
     });
     steps.push({ step: "research_loaded", sections: Object.keys(researchContext.content) });
-  } catch (error: any) {
-    return respondError(`Failed to load research ${researchId}: ${error.message}`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return respondError(`Failed to load research ${researchId}: ${msg}`);
   }
 
   // Step 2: Build prompt with research context

@@ -8,7 +8,6 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getConnection } from '@antigravity-os/shared';
-import type Database from 'better-sqlite3';
 import type { HealthCheckResult, ComponentHealth } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -263,7 +262,7 @@ export class HealthMonitor {
       const lines = stdout.trim().split('\n');
       if (lines.length >= 2) {
         const parts = lines[1].split(/\s+/);
-        const availKB = parseInt(parts[3], 10);
+        const availKB = parts.length > 3 ? parseInt(parts[3], 10) : NaN;
         const capacityStr = parts[4]?.replace('%', '') || '0';
         const usedPct = parseInt(capacityStr, 10);
 

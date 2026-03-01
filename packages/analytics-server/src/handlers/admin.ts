@@ -24,7 +24,11 @@ export async function handleExportAnalytics(ctx: AnalyticsContext, args: ExportA
   }
 
   if (include.includes("scores")) {
-    exportData.scores = ctx.db.prepare(`SELECT * FROM scores`).all();
+    try {
+      exportData.scores = ctx.db.prepare(`SELECT * FROM scores`).all();
+    } catch {
+      exportData.scores = { error: "Could not read scores data" };
+    }
   }
 
   if (include.includes("health")) {
@@ -55,49 +59,50 @@ export async function handleLogResearchOutcome(ctx: AnalyticsContext, args: LogR
 
   const metadataPath = path.join(ctx.memoryPath, "research", "analyses", researchId, "metadata.json");
 
-  let metadata: any;
-  try {
-    const metaRaw = await fs.readFile(metadataPath, "utf-8");
-    metadata = JSON.parse(metaRaw);
-  } catch {
-    return respondError(`Research not found: ${researchId}`);
-  }
+  return await ctx.lockManager.withLock(metadataPath, async () => {
+    let metadata: any;
+    try {
+      const metaRaw = await fs.readFile(metadataPath, "utf-8");
+      metadata = JSON.parse(metaRaw);
+    } catch {
+      return respondError(`Research not found: ${researchId}`);
+    }
 
-  if (!metadata.outcomes) metadata.outcomes = [];
-  metadata.outcomes.push({
-    file: implementationFile,
-    outcome,
-    metrics,
-    logged_at: new Date().toISOString(),
-  });
+    if (!metadata.outcomes) metadata.outcomes = [];
+    metadata.outcomes.push({
+      file: implementationFile,
+      outcome,
+      metrics,
+      logged_at: new Date().toISOString(),
+    });
 
-  if (outcome === "success") {
-    metadata.validation_count = (metadata.validation_count || 0) + 1;
-  } else if (outcome === "failed") {
-    metadata.contradiction_count = (metadata.contradiction_count || 0) + 1;
-  }
+    if (outcome === "success") {
+      metadata.validation_count = (metadata.validation_count || 0) + 1;
+    } else if (outcome === "failed") {
+      metadata.contradiction_count = (metadata.contradiction_count || 0) + 1;
+    }
 
-  const successes = metadata.outcomes.filter((o: any) => o.outcome === "success").length;
-  const failures = metadata.outcomes.filter((o: any) => o.outcome === "failed").length;
-  const total = metadata.outcomes.length;
-  const successRate = successes / total;
-  const failureRate = failures / total;
-  metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
+    const successes = metadata.outcomes.filter((o: any) => o.outcome === "success").length;
+    const failures = metadata.outcomes.filter((o: any) => o.outcome === "failed").length;
+    const total = metadata.outcomes.length;
+    const successRate = successes / total;
+    const failureRate = failures / total;
+    metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
 
-  await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
 
-  ctx.db.prepare(
-    `INSERT INTO research_outcomes (timestamp, research_id, implementation_file, outcome, metrics, confidence_after)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(
-    new Date().toISOString(), researchId, implementationFile, outcome,
-    metrics ? JSON.stringify(metrics) : null, metadata.confidence
-  );
+    ctx.db.prepare(
+      `INSERT INTO research_outcomes (timestamp, research_id, implementation_file, outcome, metrics, confidence_after)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      new Date().toISOString(), researchId, implementationFile, outcome,
+      metrics ? JSON.stringify(metrics) : null, metadata.confidence
+    );
 
-  return respond({
-    status: "success",
-    operation: "log_research_outcome",
-    summary: `Logged ${outcome} outcome for research "${metadata.title || researchId}"`,
+    return respond({
+      status: "success",
+      operation: "log_research_outcome",
+      summary: `Logged ${outcome} outcome for research "${metadata.title || researchId}"`,
     metadata: {
       research_id: researchId,
       title: metadata.title || researchId,
@@ -108,6 +113,7 @@ export async function handleLogResearchOutcome(ctx: AnalyticsContext, args: LogR
       outcome,
       metrics,
     },
+  });
   });
 }
 

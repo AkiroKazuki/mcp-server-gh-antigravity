@@ -110,10 +110,9 @@ export class SemanticSearch {
       "INSERT INTO semantic_chunks (file, content, category, embedding, indexed_at) VALUES (?, ?, ?, ?, datetime('now'))"
     );
 
-    // Clear existing index and rebuild
-    this.db.prepare("DELETE FROM semantic_chunks").run();
+    // Build new chunks in memory first, then swap atomically
+    const newChunks: Array<{ relPath: string; chunk: string; category: string; embedding: number[] }> = [];
 
-    let chunksIndexed = 0;
     for (const file of files) {
       const content = await fs.readFile(file, "utf-8");
       const chunks = this.chunkText(content, 500);
@@ -126,16 +125,24 @@ export class SemanticSearch {
           normalize: true,
         });
         const embedding = Array.from(output.data) as number[];
-        insert.run(relPath, chunk, category, this.toBlob(embedding));
-        chunksIndexed++;
+        newChunks.push({ relPath, chunk, category, embedding });
       }
     }
 
+    // Atomic swap: delete old + insert new in a single transaction
+    const txn = this.db.transaction(() => {
+      this.db!.prepare("DELETE FROM semantic_chunks").run();
+      for (const c of newChunks) {
+        insert.run(c.relPath, c.chunk, c.category, this.toBlob(c.embedding));
+      }
+    });
+    txn();
+
     console.error(
-      `[semantic] Indexed ${chunksIndexed} chunks from ${files.length} files`
+      `[semantic] Indexed ${newChunks.length} chunks from ${files.length} files`
     );
 
-    return { chunksIndexed, filesProcessed: files.length };
+    return { chunksIndexed: newChunks.length, filesProcessed: files.length };
   }
 
   async search(

@@ -21,7 +21,12 @@ export function getConnection(dbPath: string, options?: { timeout?: number }): D
   }
 
   const db = new Database(dbPath, { timeout: options?.timeout ?? 5000 });
-  db.pragma("journal_mode = WAL");
+  try {
+    db.pragma("journal_mode = WAL");
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   connections.set(dbPath, { db, refs: 1 });
   return db;
 }
@@ -32,7 +37,7 @@ export function getConnection(dbPath: string, options?: { timeout?: number }): D
  */
 export function releaseConnection(dbPath: string): void {
   const entry = connections.get(dbPath);
-  if (!entry) return;
+  if (!entry || entry.refs <= 0) return;
   entry.refs--;
   if (entry.refs <= 0) {
     try {

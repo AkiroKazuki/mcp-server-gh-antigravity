@@ -29,6 +29,7 @@ export class FileLockManager {
 
     return () => {
       this.locks.delete(normalized);
+      releaseLock();
       console.error(`[lock] released: ${path.basename(normalized)}`);
 
       const queue = this.queues.get(normalized) || [];

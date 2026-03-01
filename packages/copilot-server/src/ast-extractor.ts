@@ -30,6 +30,8 @@ export function extractApiSurface(filePath: string, content: string): string | n
     extractExportedVariables(sourceFile, parts);
     extractExportedEnums(sourceFile, parts);
 
+    project.removeSourceFile(sourceFile);
+
     return parts.length > 0 ? parts.join("\n\n") : null;
   } catch {
     return null;

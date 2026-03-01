@@ -77,8 +77,9 @@ export async function handleGetResearchContext(ctx: MemoryContext, args: GetRese
         sections_returned: Object.keys(result.content),
       },
     });
-  } catch (error: any) {
-    return respondError(`Research not found: ${research_id}. Error: ${error.message}`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return respondError(`Research not found: ${research_id}. Error: ${msg}`);
   }
 }
 
@@ -99,8 +100,9 @@ export async function handleIngestUrl(ctx: MemoryContext, args: IngestUrlArgs) {
       return respondError(`Failed to fetch URL: ${response.status} ${response.statusText}`);
     }
     html = await response.text();
-  } catch (error: any) {
-    return respondError(`Failed to fetch URL: ${error.message}`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return respondError(`Failed to fetch URL: ${msg}`);
   }
 
   // Convert HTML to Markdown

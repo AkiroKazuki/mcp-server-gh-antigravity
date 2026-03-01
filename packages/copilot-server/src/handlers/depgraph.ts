@@ -74,8 +74,12 @@ function buildUpstreamGraph(entryFile: string, maxDepth: number): GraphNode[] {
   return nodes;
 }
 
-function findDownstreamFiles(targetFile: string, projectRoot: string, maxDepth: number): string[] {
+function findDownstreamFiles(targetFile: string, projectRoot: string, maxDepth: number, visited?: Set<string>): string[] {
   const absTarget = path.resolve(targetFile);
+  const seen = visited ?? new Set<string>();
+  if (seen.has(absTarget)) return [];
+  seen.add(absTarget);
+
   const downstream = new Set<string>();
 
   function scanDir(dir: string) {
@@ -105,7 +109,7 @@ function findDownstreamFiles(targetFile: string, projectRoot: string, maxDepth: 
   if (maxDepth > 1) {
     const nextLevel = new Set<string>();
     for (const file of downstream) {
-      const deeper = findDownstreamFiles(file, projectRoot, maxDepth - 1);
+      const deeper = findDownstreamFiles(file, projectRoot, maxDepth - 1, seen);
       for (const d of deeper) nextLevel.add(d);
     }
     for (const d of nextLevel) downstream.add(d);

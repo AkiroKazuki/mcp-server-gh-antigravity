@@ -260,37 +260,40 @@ export async function handleMemoryCommitStaged(ctx: MemoryContext, args: MemoryC
   }
 
   const applied: Array<{ file_key: string; mode: string }> = [];
+  let commitHash: string | null = null;
 
-  for (const change of stagingArea) {
-    await ctx.lockManager.withLock(change.filePath, async () => {
-      await fs.mkdir(path.dirname(change.filePath), { recursive: true });
-      if (change.mode === "replace") {
-        await fs.writeFile(change.filePath, change.content, "utf-8");
-      } else {
-        try {
-          await fs.access(change.filePath);
-          await fs.appendFile(change.filePath, "\n" + change.content);
-        } catch {
+  try {
+    for (const change of stagingArea) {
+      await ctx.lockManager.withLock(change.filePath, async () => {
+        await fs.mkdir(path.dirname(change.filePath), { recursive: true });
+        if (change.mode === "replace") {
           await fs.writeFile(change.filePath, change.content, "utf-8");
+        } else {
+          try {
+            await fs.access(change.filePath);
+            await fs.appendFile(change.filePath, "\n" + change.content);
+          } catch {
+            await fs.writeFile(change.filePath, change.content, "utf-8");
+          }
         }
-      }
-      applied.push({ file_key: change.fileKey, mode: change.mode });
-    });
+        applied.push({ file_key: change.fileKey, mode: change.mode });
+      });
+    }
+
+    // Single atomic git commit for all changes
+    commitHash = await ctx.git.commitAll("STAGED", message);
+
+    ctx.temporal.logOperation(
+      "memory_commit_staged",
+      undefined,
+      commitHash ?? undefined,
+      undefined,
+      `Committed ${applied.length} staged changes: ${message}`,
+    );
+  } finally {
+    // Always clear staging area, even on partial failure
+    stagingArea.length = 0;
   }
-
-  // Single atomic git commit for all changes
-  const commitHash = await ctx.git.commitAll("STAGED", message);
-
-  ctx.temporal.logOperation(
-    "memory_commit_staged",
-    undefined,
-    commitHash ?? undefined,
-    undefined,
-    `Committed ${applied.length} staged changes: ${message}`,
-  );
-
-  // Clear staging area
-  stagingArea.length = 0;
 
   return respond({
     status: "success",

@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getConnection } from '@antigravity-os/shared';
 import type Database from 'better-sqlite3';
-import { parseJsonl } from '@antigravity-os/shared';
 import type { RateLimitStatus } from './types.js';
 
 interface BudgetConfig {

@@ -635,6 +635,11 @@ export class TemporalMemory {
    * Converts a raw database row into a typed MemoryEntry, parsing JSON fields.
    */
   private rowToEntry(row: Record<string, unknown>): MemoryEntry {
+    let tags: string[] = [];
+    let related: string[] = [];
+    try { tags = JSON.parse((row.tags as string) || '[]'); } catch { tags = []; }
+    try { related = JSON.parse((row.related_entries as string) || '[]'); } catch { related = []; }
+
     return {
       id: row.id as string,
       content: row.content as string,
@@ -646,8 +651,8 @@ export class TemporalMemory {
       last_validated: row.last_validated as string,
       validation_count: row.validation_count as number,
       contradiction_count: row.contradiction_count as number,
-      tags: JSON.parse((row.tags as string) || '[]'),
-      related_entries: JSON.parse((row.related_entries as string) || '[]'),
+      tags,
+      related_entries: related,
     };
   }
 

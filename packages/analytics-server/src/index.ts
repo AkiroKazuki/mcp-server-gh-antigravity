@@ -19,7 +19,7 @@ import type Database from "better-sqlite3";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
-import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler, getConnection } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler, getConnection, FileLockManager } from "@antigravity-os/shared";
 import {
   LogCostSchema, GetCostSummarySchema, GetInsightsSchema,
   CheckBudgetSchema, GetPerformanceProfileSchema, GetBottlenecksSchema,
@@ -53,6 +53,7 @@ class AnalyticsServer {
   private profiler!: PerformanceProfiler;
   private health: HealthMonitor;
   private db!: Database.Database;
+  private lockManager: FileLockManager;
 
   constructor() {
     this.server = new Server(
@@ -61,6 +62,7 @@ class AnalyticsServer {
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
     this.health = new HealthMonitor(PROJECT_ROOT);
+    this.lockManager = new FileLockManager();
 
     this.setupHandlers();
 
@@ -154,6 +156,7 @@ class AnalyticsServer {
       profiler: this.profiler,
       health: this.health,
       memoryPath: MEMORY_PATH,
+      lockManager: this.lockManager,
     };
   }
 
