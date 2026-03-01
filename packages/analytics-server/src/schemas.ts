@@ -4,7 +4,6 @@
  */
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 // --- Tool Schemas ---
 
@@ -77,7 +76,7 @@ export type LogResearchOutcomeArgs = z.infer<typeof LogResearchOutcomeSchema>;
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
-  const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" }) as Record<string, unknown>;
+  const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
   delete jsonSchema.$schema;
   if (required) {
     jsonSchema.required = required;

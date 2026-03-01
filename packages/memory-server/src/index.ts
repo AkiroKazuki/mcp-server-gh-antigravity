@@ -14,7 +14,7 @@ import {
 import fs from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
-import { FileLockManager } from "./lock-manager.js";
+import { FileLockManager } from "@antigravity-os/shared";
 import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
@@ -741,9 +741,9 @@ class MemoryServer {
     });
   }
 
-  private async handleDetectContradictions(args: any) {
-    const category: string | undefined = args.category;
-    const threshold: number = args.threshold ?? 0.7;
+  private async handleDetectContradictions(args: DetectContradictionsArgs) {
+    const { category } = args;
+    const threshold = args.threshold ?? 0.7;
 
     const entries = this.temporal.getAllEntries(category);
 
@@ -822,9 +822,8 @@ class MemoryServer {
     });
   }
 
-  private async handleSuggestPruning(args: any) {
-    const confidenceThreshold: number | undefined = args.confidence_threshold;
-    const ageDays: number | undefined = args.age_days;
+  private async handleSuggestPruning(args: SuggestPruningArgs) {
+    const { confidence_threshold: confidenceThreshold, age_days: ageDays } = args;
 
     const candidates = this.temporal.getPruningCandidates(confidenceThreshold, ageDays);
 
@@ -848,8 +847,8 @@ class MemoryServer {
     });
   }
 
-  private async handleApplyPruning(args: any) {
-    const entryIds: string[] = args.entry_ids;
+  private async handleApplyPruning(args: ApplyPruningArgs) {
+    const { entry_ids: entryIds } = args;
 
     if (!entryIds || entryIds.length === 0) {
       return respondError("No entry_ids provided. Use suggest_pruning first.");
@@ -880,8 +879,8 @@ class MemoryServer {
     });
   }
 
-  private async handleUndo(args: any) {
-    const steps = Math.min(args?.steps || 1, 10);
+  private async handleUndo(args: MemoryUndoArgs) {
+    const steps = Math.min(args.steps ?? 1, 10);
 
     const operations = this.temporal.getRecentOperations(steps);
 
@@ -936,12 +935,8 @@ class MemoryServer {
   // New v2.1 handlers
   // =========================================================================
 
-  private async handleImportResearch(args: any) {
+  private async handleImportResearch(args: ImportResearchArgs) {
     const { markdown_content, title, tags, source } = args;
-
-    if (!markdown_content || !title) {
-      return respondError("markdown_content and title are required");
-    }
 
     const result = await this.research.importResearch({
       markdown_content,
@@ -988,12 +983,8 @@ class MemoryServer {
     });
   }
 
-  private async handleGetResearchContext(args: any) {
+  private async handleGetResearchContext(args: GetResearchContextArgs) {
     const { research_id, sections, specific_topic } = args;
-
-    if (!research_id) {
-      return respondError("research_id is required");
-    }
 
     try {
       const result = await this.research.getResearchContext({
@@ -1034,26 +1025,25 @@ class MemoryServer {
   }
 
   private checkIdempotency(key: string): unknown | null {
-    const entry = this.idempotencyCache.get(key);
-    if (!entry) return null;
-    if (Date.now() - entry.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
-      this.idempotencyCache.delete(key);
+    const row = this.idempotencyDb.prepare(
+      "SELECT result, timestamp FROM idempotency_cache WHERE key = ?"
+    ).get(key) as { result: string; timestamp: number } | undefined;
+    if (!row) return null;
+    if (Date.now() - row.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+      this.idempotencyDb.prepare("DELETE FROM idempotency_cache WHERE key = ?").run(key);
       return null;
     }
-    return entry.result;
+    return JSON.parse(row.result);
   }
 
   private storeIdempotency(key: string, result: unknown): void {
-    this.idempotencyCache.set(key, { result, timestamp: Date.now() });
+    this.idempotencyDb.prepare(
+      "INSERT OR REPLACE INTO idempotency_cache (key, result, timestamp) VALUES (?, ?, ?)"
+    ).run(key, JSON.stringify(result), Date.now());
     // Prune expired entries periodically
-    if (this.idempotencyCache.size > 100) {
-      const now = Date.now();
-      for (const [k, v] of this.idempotencyCache) {
-        if (now - v.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
-          this.idempotencyCache.delete(k);
-        }
-      }
-    }
+    this.idempotencyDb.prepare(
+      "DELETE FROM idempotency_cache WHERE timestamp < ?"
+    ).run(Date.now() - MemoryServer.IDEMPOTENCY_TTL_MS);
   }
 
   async run() {
@@ -1065,6 +1055,16 @@ class MemoryServer {
 
     // Initialize database after directories exist
     this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
+
+    // Initialize idempotency cache in SQLite (survives restarts)
+    this.idempotencyDb = new Database(DB_PATH);
+    this.idempotencyDb.exec(`
+      CREATE TABLE IF NOT EXISTS idempotency_cache (
+        key TEXT PRIMARY KEY,
+        result TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      )
+    `);
 
     // Initialize git
     await this.git.init();

@@ -5,21 +5,16 @@
 
 import { Logger } from "./utils.js";
 
-export interface ToolResponse {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}
-
-export function respond(data: unknown): ToolResponse {
+export function respond(data: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   };
 }
 
-export function respondError(message: string): ToolResponse {
+export function respondError(message: string) {
   return {
     content: [{ type: "text" as const, text: message }],
-    isError: true,
+    isError: true as const,
   };
 }
 
@@ -27,27 +22,28 @@ export function respondError(message: string): ToolResponse {
  * Wraps a tool handler with standardized error handling, logging, and timing.
  * Eliminates repetitive try/catch in each handler.
  */
-export function withToolHandler(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function withToolHandler(
   log: Logger,
   toolName: string,
-  handler: () => Promise<ToolResponse>,
+  handler: () => Promise<any>,
   profiler?: { logOperation: (server: string, op: string, duration: number, success: boolean, meta?: Record<string, unknown>) => void },
   serverName?: string,
-): Promise<ToolResponse> {
+) {
   const start = performance.now();
-  return handler()
-    .then((result) => {
-      if (profiler && serverName) {
-        profiler.logOperation(serverName, toolName, performance.now() - start, true);
-      }
-      return result;
-    })
-    .catch((error: Error) => {
-      const duration = performance.now() - start;
-      log.error(`Tool ${toolName} failed`, { error: error.message, duration_ms: duration });
-      if (profiler && serverName) {
-        profiler.logOperation(serverName, toolName, duration, false, { error: error.message });
-      }
-      return respondError(`Error: ${error.message}`);
-    });
+  try {
+    const result = await handler();
+    if (profiler && serverName) {
+      profiler.logOperation(serverName, toolName, performance.now() - start, true);
+    }
+    return result;
+  } catch (error: unknown) {
+    const duration = performance.now() - start;
+    const message = error instanceof Error ? error.message : String(error);
+    log.error(`Tool ${toolName} failed`, { error: message, duration_ms: duration });
+    if (profiler && serverName) {
+      profiler.logOperation(serverName, toolName, duration, false, { error: message });
+    }
+    return respondError(`Error: ${message}`);
+  }
 }

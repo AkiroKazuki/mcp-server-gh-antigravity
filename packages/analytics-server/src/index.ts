@@ -18,7 +18,16 @@ import path from "node:path";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
-import { getEfficiencyRulesPrompt, Logger, parseJsonl, InputValidator } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, parseJsonl, respond, respondError, withToolHandler, FileLockManager } from "@antigravity-os/shared";
+import {
+  LogCostSchema, GetCostSummarySchema, GetInsightsSchema,
+  CheckBudgetSchema, GetPerformanceProfileSchema, GetBottlenecksSchema,
+  ExportAnalyticsSchema, SetRateLimitSchema, LogResearchOutcomeSchema,
+  getAnalyticsToolDefinitions,
+  type LogCostArgs, type GetCostSummaryArgs, type GetInsightsArgs,
+  type CheckBudgetArgs, type GetPerformanceProfileArgs, type GetBottlenecksArgs,
+  type ExportAnalyticsArgs, type SetRateLimitArgs, type LogResearchOutcomeArgs,
+} from "./schemas.js";
 
 const log = new Logger("analytics-server");
 
@@ -29,21 +38,6 @@ const MEMORY_DIR = process.env.MEMORY_DIR || ".memory";
 const MEMORY_PATH = path.join(PROJECT_ROOT, MEMORY_DIR);
 const DB_PATH = path.join(MEMORY_PATH, "antigravity.db");
 
-// --- Helpers ---
-
-function respond(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
-}
-
-function respondError(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true,
-  };
-}
-
 // --- Server ---
 
 class AnalyticsServer {
@@ -51,6 +45,7 @@ class AnalyticsServer {
   private budget: BudgetEnforcer;
   private profiler!: PerformanceProfiler;
   private health: HealthMonitor;
+  private lockManager: FileLockManager;
 
   constructor() {
     this.server = new Server(
@@ -59,6 +54,7 @@ class AnalyticsServer {
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);
     this.health = new HealthMonitor(PROJECT_ROOT);
+    this.lockManager = new FileLockManager();
 
     this.setupHandlers();
 
@@ -70,156 +66,7 @@ class AnalyticsServer {
   private setupHandlers() {
     // --- Tool listing ---
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        // Enhanced v1 tools
-        {
-          name: "log_cost",
-          description: "Log an API cost event with operation timing. Returns: { status, summary, metadata: { date, agent, tokens, cost_usd, timestamp, duration_ms } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              agent: { type: "string", description: "Agent name (e.g. 'antigravity', 'copilot')" },
-              tokens: { type: "number", description: "Token count" },
-              cost_usd: { type: "number", description: "Cost in USD" },
-              task_description: { type: "string", description: "What the task was" },
-              duration_ms: { type: "number", description: "Operation duration in milliseconds" },
-            },
-            required: ["agent", "tokens", "cost_usd", "task_description"],
-          },
-        },
-        {
-          name: "get_cost_summary",
-          description: "Get cost summary for a period. Returns: { status, summary, metadata: { period, total_cost_usd, total_tokens, operation_count, daily_limit, by_agent } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              period: { type: "string", enum: ["today", "week", "month", "all"], description: "Time period" },
-            },
-          },
-        },
-        {
-          name: "get_copilot_performance",
-          description: "Get Copilot performance stats with skill correlation. Returns: { status, summary, metadata: { total_scored, avg_overall, avg_relevance, avg_correctness, avg_quality, avg_security, by_skill } }",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "get_insights",
-          description: "Get actionable insights and optimization suggestions. Returns: { status, summary, metadata: { focus, insights: string[] } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              focus: { type: "string", enum: ["cost", "quality", "performance", "all"], description: "Insight focus area" },
-            },
-          },
-        },
-        {
-          name: "check_budget",
-          description: "Check if an operation is within budget with rate limiting. Returns: { status: 'success'|'budget_exceeded'|'rate_limited', metadata: { budget: { allowed, today_spend, operation_cost, projected_total, daily_limit }, rate_limit } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              estimated_tokens: { type: "number", description: "Estimated token usage" },
-              agent: { type: "string", description: "Agent name" },
-              operation: { type: "string", description: "Operation name (for rate limiting)" },
-            },
-            required: ["estimated_tokens", "agent"],
-          },
-        },
-        // New v2 tools
-        {
-          name: "get_performance_profile",
-          description: "Get operation timing profile with p50/p95/p99 percentiles. Returns: { status, metadata: { total_operations, avg_duration_ms, operations: OperationProfile[] } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              time_window: { type: "string", enum: ["hour", "day", "week"], description: "Time window (default: day)" },
-            },
-          },
-        },
-        {
-          name: "system_health",
-          description: "Check system component health (disk, git, index, budget, database). Returns: { status, metadata: { overall_status: 'healthy'|'degraded'|'unhealthy', components, alerts, recommendations } }",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "get_skill_effectiveness",
-          description: "Analyze which skill files produce the best results. Returns: { status, metadata: { skills: Array<{ name, usage_count, avg_score_when_used, effectiveness }>, baseline_avg } }",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "predict_monthly_cost",
-          description: "Predict monthly cost based on recent trends. Returns: { status, metadata: { predicted_usd, range_low_usd, range_high_usd, confidence, trends: { increasing, rate_of_change } } }",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "get_bottlenecks",
-          description: "Identify slow operations exceeding a duration threshold. Returns: { status, metadata: { threshold_ms, bottlenecks: Array<{ operation, avg_duration_ms, occurrences, impact }> } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              threshold_ms: { type: "number", description: "Duration threshold in ms (default: 1000)" },
-            },
-          },
-        },
-        {
-          name: "export_analytics",
-          description: "Export analytics data as JSON. Returns: { status, metadata: { export_file, sections, size_bytes } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              include: {
-                type: "array",
-                items: { type: "string", enum: ["costs", "performance", "scores", "health"] },
-                description: "Data to include (default: all)",
-              },
-            },
-          },
-        },
-        {
-          name: "set_rate_limit",
-          description: "Configure rate limits for an operation. Returns: { status, metadata: { operation, per_minute, per_hour, per_day } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              operation: { type: "string", description: "Operation name to rate-limit" },
-              per_minute: { type: "number", description: "Max calls per minute" },
-              per_hour: { type: "number", description: "Max calls per hour" },
-              per_day: { type: "number", description: "Max calls per day" },
-            },
-            required: ["operation"],
-          },
-        },
-        {
-          name: "get_rate_limit_status",
-          description: "Get current rate limit configuration and usage. Returns: { status, metadata: { rate_limits: Array<{ operation, per_minute?, per_hour?, per_day? }> } }",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        // --- New v2.1 tools ---
-        {
-          name: "log_research_outcome",
-          description: "Log whether research-based implementation worked in practice. Updates research confidence based on real-world outcomes.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              research_id: { type: "string", description: "Research ID" },
-              implementation_file: { type: "string", description: "File that was implemented" },
-              outcome: { type: "string", enum: ["success", "partial", "failed"], description: "How well research predictions matched reality" },
-              metrics: {
-                type: "object",
-                properties: {
-                  expected_sharpe: { type: "number" },
-                  actual_sharpe: { type: "number" },
-                  expected_drawdown: { type: "number" },
-                  actual_drawdown: { type: "number" },
-                  notes: { type: "string" },
-                },
-                description: "Performance metrics comparing expected vs actual",
-              },
-            },
-            required: ["research_id", "implementation_file", "outcome"],
-          },
-        },
-      ],
+      tools: getAnalyticsToolDefinitions(),
     }));
 
     // --- Prompt listing ---
@@ -288,36 +135,28 @@ class AnalyticsServer {
     // --- Tool handler ---
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      const start = performance.now();
-      try {
-        const result = await this.dispatch(name, args);
-        const duration = performance.now() - start;
-        this.profiler.logOperation("analytics-server", name, duration, true);
-        return result;
-      } catch (error: any) {
-        const duration = performance.now() - start;
-        this.profiler.logOperation("analytics-server", name, duration, false, { error: error.message });
-        return respondError(`Error: ${error.message}`);
-      }
+      return withToolHandler(log, name, async () => {
+        return await this.dispatch(name, args);
+      }, this.profiler, "analytics-server");
     });
   }
 
-  private async dispatch(name: string, args: any) {
+  private async dispatch(name: string, args: unknown) {
     switch (name) {
-      case "log_cost": return await this.handleLogCost(args);
-      case "get_cost_summary": return await this.handleGetCostSummary(args);
+      case "log_cost": return await this.handleLogCost(LogCostSchema.parse(args));
+      case "get_cost_summary": return await this.handleGetCostSummary(GetCostSummarySchema.parse(args));
       case "get_copilot_performance": return await this.handleGetCopilotPerformance();
-      case "get_insights": return await this.handleGetInsights(args);
-      case "check_budget": return await this.handleCheckBudget(args);
-      case "get_performance_profile": return await this.handleGetPerformanceProfile(args);
+      case "get_insights": return await this.handleGetInsights(GetInsightsSchema.parse(args));
+      case "check_budget": return await this.handleCheckBudget(CheckBudgetSchema.parse(args));
+      case "get_performance_profile": return await this.handleGetPerformanceProfile(GetPerformanceProfileSchema.parse(args));
       case "system_health": return await this.handleSystemHealth();
       case "get_skill_effectiveness": return await this.handleGetSkillEffectiveness();
       case "predict_monthly_cost": return await this.handlePredictMonthlyCost();
-      case "get_bottlenecks": return await this.handleGetBottlenecks(args);
-      case "export_analytics": return await this.handleExportAnalytics(args);
-      case "set_rate_limit": return await this.handleSetRateLimit(args);
+      case "get_bottlenecks": return await this.handleGetBottlenecks(GetBottlenecksSchema.parse(args));
+      case "export_analytics": return await this.handleExportAnalytics(ExportAnalyticsSchema.parse(args));
+      case "set_rate_limit": return await this.handleSetRateLimit(SetRateLimitSchema.parse(args));
       case "get_rate_limit_status": return await this.handleGetRateLimitStatus();
-      case "log_research_outcome": return await this.handleLogResearchOutcome(args);
+      case "log_research_outcome": return await this.handleLogResearchOutcome(LogResearchOutcomeSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -327,20 +166,8 @@ class AnalyticsServer {
   // Enhanced v1 handlers
   // =========================================================================
 
-  private async handleLogCost(args: any) {
-    new InputValidator("log_cost", args)
-      .requireString("agent")
-      .requireNumber("tokens")
-      .requireNumber("cost_usd")
-      .requireString("task_description")
-      .optionalNumber("duration_ms")
-      .validate();
-
-    const agent: string = args.agent;
-    const tokens: number = args.tokens;
-    const costUsd: number = args.cost_usd;
-    const taskDescription: string = args.task_description;
-    const durationMs: number | undefined = args.duration_ms;
+  private async handleLogCost(args: LogCostArgs) {
+    const { agent, tokens, cost_usd: costUsd, task_description: taskDescription, duration_ms: durationMs } = args;
 
     const today = new Date().toISOString().split("T")[0];
     const timestamp = new Date().toISOString();
@@ -357,7 +184,9 @@ class AnalyticsServer {
     // Write to costs.jsonl
     const costLogPath = path.join(MEMORY_PATH, "snapshots", "costs.jsonl");
     await fs.mkdir(path.dirname(costLogPath), { recursive: true });
-    await fs.appendFile(costLogPath, JSON.stringify(entry) + "\n");
+    await this.lockManager.withLock(costLogPath, async () => {
+      await fs.appendFile(costLogPath, JSON.stringify(entry) + "\n");
+    });
 
     // Log timing
     if (durationMs !== undefined) {
@@ -372,8 +201,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleGetCostSummary(args: any) {
-    const period: "today" | "week" | "month" | "all" = args?.period || "today";
+  private async handleGetCostSummary(args: GetCostSummaryArgs) {
+    const period = args.period ?? "today";
 
     const data = await this.budget.getSpendForPeriod(period);
     const config = this.budget.getConfig();
@@ -464,8 +293,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleGetInsights(args: any) {
-    const focus: string = args?.focus || "all";
+  private async handleGetInsights(args: GetInsightsArgs) {
+    const focus = args.focus ?? "all";
     const insights: string[] = [];
 
     // Cost insights
@@ -522,16 +351,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleCheckBudget(args: any) {
-    new InputValidator("check_budget", args)
-      .requireNumber("estimated_tokens")
-      .requireString("agent")
-      .optionalString("operation")
-      .validate();
-
-    const estimatedTokens: number = args.estimated_tokens;
-    const agent: string = args.agent;
-    const operation: string | undefined = args.operation;
+  private async handleCheckBudget(args: CheckBudgetArgs) {
+    const { estimated_tokens: estimatedTokens, agent, operation } = args;
 
     const budgetResult = await this.budget.checkBudget(estimatedTokens, agent);
 
@@ -565,8 +386,8 @@ class AnalyticsServer {
   // New v2 handlers
   // =========================================================================
 
-  private async handleGetPerformanceProfile(args: any) {
-    const timeWindow: "hour" | "day" | "week" = args?.time_window || "day";
+  private async handleGetPerformanceProfile(args: GetPerformanceProfileArgs) {
+    const timeWindow = args.time_window ?? "day";
     const profile = this.profiler.getProfile(timeWindow);
 
     return respond({
@@ -728,8 +549,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleGetBottlenecks(args: any) {
-    const thresholdMs: number = args?.threshold_ms || 1000;
+  private async handleGetBottlenecks(args: GetBottlenecksArgs) {
+    const thresholdMs = args.threshold_ms ?? 1000;
     const bottlenecks = this.profiler.getBottlenecks(thresholdMs);
 
     return respond({
@@ -740,8 +561,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleExportAnalytics(args: any) {
-    const include: string[] = args?.include || ["costs", "performance", "scores", "health"];
+  private async handleExportAnalytics(args: ExportAnalyticsArgs) {
+    const include = args.include ?? ["costs", "performance", "scores", "health"];
     const exportData: Record<string, any> = {
       exported_at: new Date().toISOString(),
       version: "2.1.0",
@@ -778,7 +599,9 @@ class AnalyticsServer {
     await fs.mkdir(exportDir, { recursive: true });
     const exportFile = `analytics_export_${Date.now()}.json`;
     const exportPath = path.join(exportDir, exportFile);
-    await fs.writeFile(exportPath, JSON.stringify(exportData, null, 2), "utf-8");
+    await this.lockManager.withLock(exportPath, async () => {
+      await fs.writeFile(exportPath, JSON.stringify(exportData, null, 2), "utf-8");
+    });
 
     return respond({
       status: "success",
@@ -792,18 +615,8 @@ class AnalyticsServer {
     });
   }
 
-  private async handleSetRateLimit(args: any) {
-    new InputValidator("set_rate_limit", args)
-      .requireString("operation")
-      .optionalNumber("per_minute")
-      .optionalNumber("per_hour")
-      .optionalNumber("per_day")
-      .validate();
-
-    const operation: string = args.operation;
-    const perMinute: number | undefined = args.per_minute;
-    const perHour: number | undefined = args.per_hour;
-    const perDay: number | undefined = args.per_day;
+  private async handleSetRateLimit(args: SetRateLimitArgs) {
+    const { operation, per_minute: perMinute, per_hour: perHour, per_day: perDay } = args;
 
     this.budget.setRateLimit(operation, perMinute, perHour, perDay);
 
@@ -835,17 +648,9 @@ class AnalyticsServer {
   // New v2.1 handlers
   // =========================================================================
 
-  private async handleLogResearchOutcome(args: any) {
-    new InputValidator("log_research_outcome", args)
-      .requireString("research_id")
-      .requireString("implementation_file")
-      .requireEnum("outcome", ["success", "partial", "failed"])
-      .validate();
-
-    const researchId: string = args.research_id;
-    const implementationFile: string = args.implementation_file;
-    const outcome: "success" | "partial" | "failed" = args.outcome;
-    const metrics: Record<string, unknown> = args.metrics || {};
+  private async handleLogResearchOutcome(args: LogResearchOutcomeArgs) {
+    const { research_id: researchId, implementation_file: implementationFile, outcome } = args;
+    const metrics: Record<string, unknown> = args.metrics ?? {};
 
     // Load research metadata
     const metadataPath = path.join(
@@ -889,7 +694,9 @@ class AnalyticsServer {
     metadata.confidence = Math.max(0.1, Math.min(1.0, parseFloat((0.5 + successRate * 0.5 - failureRate * 0.3).toFixed(2))));
 
     // Save updated metadata
-    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+    await this.lockManager.withLock(metadataPath, async () => {
+      await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+    });
 
     // Log to research_outcomes.jsonl
     const logEntry = {
@@ -903,7 +710,9 @@ class AnalyticsServer {
 
     const logPath = path.join(MEMORY_PATH, "snapshots", "research_outcomes.jsonl");
     await fs.mkdir(path.dirname(logPath), { recursive: true });
-    await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+    await this.lockManager.withLock(logPath, async () => {
+      await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+    });
 
     return respond({
       status: "success",

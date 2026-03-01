@@ -22,7 +22,17 @@ import { FailureAnalyzer } from "./failure-analyzer.js";
 import { LoopDetector } from "./loop-detector.js";
 import { CliExecutor } from "./cli-executor.js";
 import { ResearchIntegration } from "./research-integration.js";
-import { getEfficiencyRulesPrompt, Logger, InputValidator } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, respond, respondError, withToolHandler } from "@antigravity-os/shared";
+import {
+  GeneratePromptSchema, ExecuteSchema, ValidateSchema, ScoreSchema,
+  BatchExecuteSchema, PreviewSchema, GetContextSchema, CacheClearSchema,
+  AnalyzeFailureSchema, SuggestSkillUpdateSchema, ExecuteAndValidateSchema,
+  ImplementWithResearchSchema, getCopilotToolDefinitions,
+  type GeneratePromptArgs, type ExecuteArgs, type ValidateArgs, type ScoreArgs,
+  type BatchExecuteArgs, type PreviewArgs, type GetContextArgs, type CacheClearArgs,
+  type AnalyzeFailureArgs, type SuggestSkillUpdateArgs, type ExecuteAndValidateArgs,
+  type ImplementWithResearchArgs,
+} from "./schemas.js";
 
 const log = new Logger("copilot-server");
 
@@ -34,21 +44,6 @@ const MEMORY_PATH = path.join(PROJECT_ROOT, MEMORY_DIR);
 const DB_PATH = path.join(MEMORY_PATH, "antigravity.db");
 const SKILLS_DIR = path.join(MEMORY_PATH, "prompts", "templates");
 const GENERATED_DIR = path.join(MEMORY_PATH, "prompts", "generated");
-
-// --- Helpers ---
-
-function respond(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
-}
-
-function respondError(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true,
-  };
-}
 
 // --- Server ---
 
@@ -84,187 +79,7 @@ class CopilotServer {
   private setupHandlers() {
     // --- Tool listing ---
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: "copilot_generate_prompt",
-          description: "Build a structured AI prompt from a skill template with multi-file context injection.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              skill_file: { type: "string", description: "Skill template file (relative to .memory/prompts/templates/)" },
-              requirements: { type: "string", description: "What you need from Copilot" },
-              target_file: { type: "string", description: "File to generate code for" },
-              context_files: { type: "array", items: { type: "string" }, description: "Additional files to include as context" },
-              max_context_depth: { type: "number", description: "Import resolution depth (default: 1)" },
-            },
-            required: ["skill_file", "requirements"],
-          },
-        },
-        {
-          name: "copilot_execute",
-          description: "Save generated code to file with response caching and validation.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Generated prompt file to execute" },
-              output_file: { type: "string", description: "Where to save the result" },
-              task_id: { type: "string", description: "Unique task ID for loop detection" },
-              use_cache: { type: "boolean", description: "Use response cache (default: true)" },
-            },
-            required: ["prompt_file", "output_file"],
-          },
-        },
-        {
-          name: "copilot_validate",
-          description: "Validate generated code for security, quality, and trading patterns.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", description: "File to validate" },
-              requirements: { type: "array", items: { type: "string" }, description: "Specific requirements to check" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "copilot_score",
-          description: "Score a Copilot output for relevance, correctness, and quality.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", description: "Generated file to score" },
-              prompt_file: { type: "string", description: "Original prompt file" },
-              skill_file: { type: "string", description: "Skill file used (for effectiveness tracking)" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "copilot_batch_execute",
-          description: "Execute multiple prompts with conflict detection.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompts: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    prompt_file: { type: "string" },
-                    output_file: { type: "string" },
-                    task_id: { type: "string" },
-                  },
-                  required: ["prompt_file", "output_file"],
-                },
-                description: "Array of prompt/output pairs",
-              },
-            },
-            required: ["prompts"],
-          },
-        },
-        {
-          name: "copilot_preview",
-          description: "Preview what a prompt would generate without saving. Shows enhanced diff.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Generated prompt file" },
-              target_file: { type: "string", description: "Existing file to diff against" },
-            },
-            required: ["prompt_file"],
-          },
-        },
-        // --- New v2 tools ---
-        {
-          name: "copilot_get_context",
-          description: "Gather multi-file context for a target file (imports, types, signatures, git changes).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              target_file: { type: "string", description: "File to gather context for" },
-              max_depth: { type: "number", description: "Import resolution depth (default: 1)" },
-              include_types: { type: "boolean", description: "Include type definitions (default: true)" },
-              include_git_diff: { type: "boolean", description: "Include recent git changes (default: true)" },
-            },
-            required: ["target_file"],
-          },
-        },
-        {
-          name: "copilot_cache_clear",
-          description: "Clear the response cache.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              scope: { type: "string", enum: ["all", "expired", "today"], description: "Scope of cache to clear" },
-            },
-          },
-        },
-        {
-          name: "copilot_cache_stats",
-          description: "Get cache hit/miss statistics.",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "analyze_failure",
-          description: "Analyze why a Copilot prompt failed (read-only diagnosis).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Prompt file that produced bad output" },
-              output_file: { type: "string", description: "The bad output file" },
-              validation_errors: { type: "array", items: { type: "string" }, description: "Validation errors if any" },
-              expected: { type: "string", description: "What was expected" },
-            },
-            required: ["prompt_file"],
-          },
-        },
-        {
-          name: "suggest_skill_update",
-          description: "Propose changes to a skill file based on failure analysis (requires approval).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Failed prompt file" },
-              skill_file: { type: "string", description: "Skill file to update" },
-              output_file: { type: "string", description: "Failed output file" },
-              validation_errors: { type: "array", items: { type: "string" }, description: "Validation errors" },
-            },
-            required: ["prompt_file", "skill_file"],
-          },
-        },
-        // --- New v2.1 tools ---
-        {
-          name: "copilot_execute_and_validate",
-          description: "Execute GitHub Copilot CLI with prompt file, save output, and validate. AUTOMATICALLY runs 'gh copilot -p' - no manual terminal commands needed. Returns validation results.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Path to prompt file (from copilot_generate_prompt)" },
-              output_file: { type: "string", description: "Where to save generated code" },
-              requirements: { type: "array", items: { type: "string" }, description: "Requirements to validate (e.g., ['Type hints', 'Handle None values'])" },
-              auto_approve_if_valid: { type: "boolean", description: "Automatically accept if validation passes (default: false)" },
-            },
-            required: ["prompt_file", "output_file"],
-          },
-        },
-        {
-          name: "implement_with_research_context",
-          description: "Complete workflow: Load research context → Generate prompt → Execute Copilot → Validate → Link to research. One tool call for research-based implementation.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              research_id: { type: "string", description: "Research ID from import_research_analysis" },
-              research_section: { type: "string", description: "Specific section (e.g., 'implementation', 'findings')" },
-              specific_topic: { type: "string", description: "Optional: Specific topic from section (e.g., 'entry rules')" },
-              task_description: { type: "string", description: "What to implement (e.g., 'Bollinger Band entry signal')" },
-              file_path: { type: "string", description: "Output file path" },
-              function_signature: { type: "string", description: "Complete function signature with types" },
-              requirements: { type: "array", items: { type: "string" }, description: "Additional requirements" },
-            },
-            required: ["research_id", "task_description", "file_path"],
-          },
-        },
-      ],
+      tools: getCopilotToolDefinitions(),
     }));
 
     // --- Prompt listing ---
@@ -336,27 +151,25 @@ class CopilotServer {
     // --- Tool handler ---
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      try {
+      return withToolHandler(log, name, async () => {
         switch (name) {
-          case "copilot_generate_prompt": return await this.handleGeneratePrompt(args);
-          case "copilot_execute": return await this.handleExecute(args);
-          case "copilot_validate": return await this.handleValidate(args);
-          case "copilot_score": return await this.handleScore(args);
-          case "copilot_batch_execute": return await this.handleBatchExecute(args);
-          case "copilot_preview": return await this.handlePreview(args);
-          case "copilot_get_context": return await this.handleGetContext(args);
-          case "copilot_cache_clear": return await this.handleCacheClear(args);
+          case "copilot_generate_prompt": return await this.handleGeneratePrompt(GeneratePromptSchema.parse(args));
+          case "copilot_execute": return await this.handleExecute(ExecuteSchema.parse(args));
+          case "copilot_validate": return await this.handleValidate(ValidateSchema.parse(args));
+          case "copilot_score": return await this.handleScore(ScoreSchema.parse(args));
+          case "copilot_batch_execute": return await this.handleBatchExecute(BatchExecuteSchema.parse(args));
+          case "copilot_preview": return await this.handlePreview(PreviewSchema.parse(args));
+          case "copilot_get_context": return await this.handleGetContext(GetContextSchema.parse(args));
+          case "copilot_cache_clear": return await this.handleCacheClear(CacheClearSchema.parse(args));
           case "copilot_cache_stats": return await this.handleCacheStats();
-          case "analyze_failure": return await this.handleAnalyzeFailure(args);
-          case "suggest_skill_update": return await this.handleSuggestSkillUpdate(args);
-          case "copilot_execute_and_validate": return await this.handleExecuteAndValidate(args);
-          case "implement_with_research_context": return await this.handleImplementWithResearch(args);
+          case "analyze_failure": return await this.handleAnalyzeFailure(AnalyzeFailureSchema.parse(args));
+          case "suggest_skill_update": return await this.handleSuggestSkillUpdate(SuggestSkillUpdateSchema.parse(args));
+          case "copilot_execute_and_validate": return await this.handleExecuteAndValidate(ExecuteAndValidateSchema.parse(args));
+          case "implement_with_research_context": return await this.handleImplementWithResearch(ImplementWithResearchSchema.parse(args));
           default:
             return respondError(`Unknown tool: ${name}`);
         }
-      } catch (error: any) {
-        return respondError(`Error: ${error.message}`);
-      }
+      });
     });
   }
 
@@ -364,20 +177,10 @@ class CopilotServer {
   // Enhanced v1 handlers
   // =========================================================================
 
-  private async handleGeneratePrompt(args: any) {
-    new InputValidator("copilot_generate_prompt", args)
-      .requireString("skill_file")
-      .requireString("requirements")
-      .optionalString("target_file")
-      .optionalArray("context_files")
-      .optionalNumber("max_context_depth")
-      .validate();
-
-    const skillFile: string = args.skill_file;
-    const requirements: string = args.requirements;
-    const targetFile: string | undefined = args.target_file;
-    const contextFiles: string[] = args.context_files || [];
-    const maxContextDepth: number = args.max_context_depth ?? 1;
+  private async handleGeneratePrompt(args: GeneratePromptArgs) {
+    const { skill_file: skillFile, requirements, target_file: targetFile } = args;
+    const contextFiles = args.context_files ?? [];
+    const maxContextDepth = args.max_context_depth ?? 1;
 
     // Load skill template
     const skillPath = path.join(SKILLS_DIR, skillFile);
@@ -447,17 +250,10 @@ class CopilotServer {
     });
   }
 
-  private async handleExecute(args: any) {
-    new InputValidator("copilot_execute", args)
-      .requireString("prompt_file")
-      .requireString("output_file")
-      .optionalString("task_id")
-      .validate();
-
-    const promptFile: string = args.prompt_file;
-    const outputFile: string = args.output_file;
-    const taskId: string = args.task_id || `task_${Date.now()}`;
-    const useCache: boolean = args.use_cache ?? true;
+  private async handleExecute(args: ExecuteArgs) {
+    const { prompt_file: promptFile, output_file: outputFile } = args;
+    const taskId = args.task_id ?? `task_${Date.now()}`;
+    const useCache = args.use_cache ?? true;
 
     // Loop detection
     this.loopDetector.checkLoop(taskId);
@@ -531,14 +327,8 @@ class CopilotServer {
     });
   }
 
-  private async handleValidate(args: any) {
-    new InputValidator("copilot_validate", args)
-      .requireString("file")
-      .optionalArray("requirements")
-      .validate();
-
-    const file: string = args.file;
-    const requirements: string[] | undefined = args.requirements;
+  private async handleValidate(args: ValidateArgs) {
+    const { file, requirements } = args;
 
     const filePath = path.isAbsolute(file) ? file : path.join(PROJECT_ROOT, file);
     let content: string;
@@ -571,10 +361,8 @@ class CopilotServer {
     });
   }
 
-  private async handleScore(args: any) {
-    const file: string = args.file;
-    const promptFile: string | undefined = args.prompt_file;
-    const skillFile: string | undefined = args.skill_file;
+  private async handleScore(args: ScoreArgs) {
+    const { file, prompt_file: promptFile, skill_file: skillFile } = args;
 
     const filePath = path.isAbsolute(file) ? file : path.join(PROJECT_ROOT, file);
     let content: string;
@@ -634,8 +422,8 @@ class CopilotServer {
     });
   }
 
-  private async handleBatchExecute(args: any) {
-    const prompts: Array<{ prompt_file: string; output_file: string; task_id?: string }> = args.prompts;
+  private async handleBatchExecute(args: BatchExecuteArgs) {
+    const { prompts } = args;
 
     if (!prompts || prompts.length === 0) {
       return respondError("No prompts provided");
@@ -674,9 +462,8 @@ class CopilotServer {
     });
   }
 
-  private async handlePreview(args: any) {
-    const promptFile: string = args.prompt_file;
-    const targetFile: string | undefined = args.target_file;
+  private async handlePreview(args: PreviewArgs) {
+    const { prompt_file: promptFile, target_file: targetFile } = args;
 
     const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
     let promptContent: string;
@@ -713,11 +500,11 @@ class CopilotServer {
   // New v2 handlers
   // =========================================================================
 
-  private async handleGetContext(args: any) {
-    const targetFile: string = args.target_file;
-    const maxDepth: number = args.max_depth ?? 1;
-    const includeTypes: boolean = args.include_types ?? true;
-    const includeGitDiff: boolean = args.include_git_diff ?? true;
+  private async handleGetContext(args: GetContextArgs) {
+    const { target_file: targetFile } = args;
+    const maxDepth = args.max_depth ?? 1;
+    const includeTypes = args.include_types ?? true;
+    const includeGitDiff = args.include_git_diff ?? true;
 
     const context = await this.contextGatherer.gatherContext(targetFile, {
       maxDepth,
@@ -737,8 +524,8 @@ class CopilotServer {
     });
   }
 
-  private async handleCacheClear(args: any) {
-    const scope: "all" | "expired" | "today" = args?.scope || "all";
+  private async handleCacheClear(args: CacheClearArgs) {
+    const scope = args.scope ?? "all";
     const result = this.cache.clear(scope);
 
     return respond({
@@ -760,11 +547,8 @@ class CopilotServer {
     });
   }
 
-  private async handleAnalyzeFailure(args: any) {
-    const promptFile: string = args.prompt_file;
-    const outputFile: string | undefined = args.output_file;
-    const validationErrors: string[] | undefined = args.validation_errors;
-    const expected: string | undefined = args.expected;
+  private async handleAnalyzeFailure(args: AnalyzeFailureArgs) {
+    const { prompt_file: promptFile, output_file: outputFile, validation_errors: validationErrors, expected } = args;
 
     const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
     const outputPath = outputFile
@@ -790,11 +574,8 @@ class CopilotServer {
     });
   }
 
-  private async handleSuggestSkillUpdate(args: any) {
-    const promptFile: string = args.prompt_file;
-    const skillFile: string = args.skill_file;
-    const outputFile: string | undefined = args.output_file;
-    const validationErrors: string[] | undefined = args.validation_errors;
+  private async handleSuggestSkillUpdate(args: SuggestSkillUpdateArgs) {
+    const { prompt_file: promptFile, skill_file: skillFile, output_file: outputFile, validation_errors: validationErrors } = args;
 
     const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
     const outputPath = outputFile
@@ -827,17 +608,10 @@ class CopilotServer {
   // New v2.1 handlers
   // =========================================================================
 
-  private async handleExecuteAndValidate(args: any) {
-    new InputValidator("copilot_execute_and_validate", args)
-      .requireString("prompt_file")
-      .requireString("output_file")
-      .optionalArray("requirements")
-      .validate();
-
-    const promptFile: string = args.prompt_file;
-    const outputFile: string = args.output_file;
-    const requirements: string[] = args.requirements || [];
-    const autoApprove: boolean = args.auto_approve_if_valid ?? false;
+  private async handleExecuteAndValidate(args: ExecuteAndValidateArgs) {
+    const { prompt_file: promptFile, output_file: outputFile } = args;
+    const requirements = args.requirements ?? [];
+    const autoApprove = args.auto_approve_if_valid ?? false;
 
     const taskId = `${promptFile}:${outputFile}`;
 
@@ -932,24 +706,12 @@ class CopilotServer {
     });
   }
 
-  private async handleImplementWithResearch(args: any) {
-    new InputValidator("implement_with_research_context", args)
-      .requireString("research_id")
-      .requireString("task_description")
-      .requireString("file_path")
-      .optionalString("research_section")
-      .optionalString("specific_topic")
-      .optionalString("function_signature")
-      .optionalArray("requirements")
-      .validate();
-
-    const researchId: string = args.research_id;
-    const taskDescription: string = args.task_description;
-    const filePath: string = args.file_path;
-    const researchSection: string | undefined = args.research_section;
-    const specificTopic: string | undefined = args.specific_topic;
-    const functionSignature: string | undefined = args.function_signature;
-    const requirements: string[] = args.requirements || [];
+  private async handleImplementWithResearch(args: ImplementWithResearchArgs) {
+    const { research_id: researchId, task_description: taskDescription, file_path: filePath } = args;
+    const researchSection = args.research_section;
+    const specificTopic = args.specific_topic;
+    const functionSignature = args.function_signature;
+    const requirements = args.requirements ?? [];
 
     const steps: Array<{ step: string; [key: string]: unknown }> = [];
 
