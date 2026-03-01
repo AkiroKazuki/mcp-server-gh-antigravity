@@ -51,6 +51,7 @@ export const GetContextSchema = z.object({
   max_depth: z.number().optional().describe("Import resolution depth (default: 1)"),
   include_types: z.boolean().optional().describe("Include type definitions (default: true)"),
   include_git_diff: z.boolean().optional().describe("Include recent git changes (default: true)"),
+  signatures_only: z.boolean().optional().describe("Use AST to return only exported signatures from dependencies (default: true)"),
 });
 
 export const CacheClearSchema = z.object({
