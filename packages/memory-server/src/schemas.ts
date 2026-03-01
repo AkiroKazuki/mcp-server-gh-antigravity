@@ -147,6 +147,19 @@ export const IngestUrlSchema = z.object({
 });
 export type IngestUrlArgs = z.infer<typeof IngestUrlSchema>;
 
+export const MemoryStageSchema = z.object({
+  file_key: z.string().describe("Memory file key (e.g., 'core/architecture')"),
+  content: z.string().describe("Content to stage for this file"),
+  mode: z.enum(["append", "replace"]).optional().describe("How to apply staged content (default: append)"),
+  description: z.string().optional().describe("Description of this staged change"),
+});
+export type MemoryStageArgs = z.infer<typeof MemoryStageSchema>;
+
+export const MemoryCommitStagedSchema = z.object({
+  message: z.string().describe("Commit message for the staged changes"),
+});
+export type MemoryCommitStagedArgs = z.infer<typeof MemoryCommitStagedSchema>;
+
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
@@ -303,6 +316,16 @@ export function getMemoryToolDefinitions(fileKeys: string[]) {
       name: "memory_ingest_url",
       description: "Fetch a URL (documentation, API reference, article), convert HTML to markdown, and store as a research entry in temporal memory. Enables autonomous learning of new libraries and APIs.",
       inputSchema: toJsonSchema(IngestUrlSchema, ["url", "title"]),
+    },
+    {
+      name: "memory_stage",
+      description: "Stage a memory change without committing to git. Use with memory_commit_staged for atomic multi-file updates.",
+      inputSchema: toJsonSchema(MemoryStageSchema, ["file_key", "content"]),
+    },
+    {
+      name: "memory_commit_staged",
+      description: "Commit all staged memory changes as a single atomic git commit. Clears the staging area after commit.",
+      inputSchema: toJsonSchema(MemoryCommitStagedSchema, ["message"]),
     },
   ];
 }

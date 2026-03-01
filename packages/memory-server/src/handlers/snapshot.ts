@@ -5,6 +5,7 @@ import type { MemoryContext } from "./types.js";
 import type {
   MemorySnapshotArgs, ContextSummaryArgs, MemoryHistoryArgs,
   MemoryRollbackArgs, MemoryDiffArgs, MemoryUndoArgs,
+  MemoryStageArgs, MemoryCommitStagedArgs,
 } from "../schemas.js";
 
 function getFilePath(ctx: MemoryContext, key: string): string | undefined {
@@ -203,5 +204,103 @@ export async function handleUndo(ctx: MemoryContext, args: MemoryUndoArgs) {
     operation: "memory_undo",
     summary: `Undid ${undone.length} of ${steps} requested operations`,
     metadata: { undone: undone.length, operations_reversed: undone },
+  });
+}
+
+// --- Staging ---
+
+interface StagedChange {
+  fileKey: string;
+  filePath: string;
+  content: string;
+  mode: "append" | "replace";
+  description?: string;
+  stagedAt: string;
+}
+
+const stagingArea: StagedChange[] = [];
+
+export async function handleMemoryStage(ctx: MemoryContext, args: MemoryStageArgs) {
+  const { file_key: fileKey, content } = args;
+  const mode = args.mode ?? "append";
+  const description = args.description;
+
+  const relPath = getFilePath(ctx, fileKey);
+  if (!relPath) return respondError(`Unknown file key: ${fileKey}`);
+
+  const fullPath = path.join(ctx.memoryPath, relPath);
+
+  stagingArea.push({
+    fileKey,
+    filePath: fullPath,
+    content,
+    mode,
+    description,
+    stagedAt: new Date().toISOString(),
+  });
+
+  return respond({
+    status: "success",
+    operation: "memory_stage",
+    summary: `Staged ${mode} to ${fileKey} (${stagingArea.length} total staged)`,
+    metadata: {
+      file_key: fileKey,
+      mode,
+      staged_count: stagingArea.length,
+      staged_files: [...new Set(stagingArea.map((s) => s.fileKey))],
+    },
+  });
+}
+
+export async function handleMemoryCommitStaged(ctx: MemoryContext, args: MemoryCommitStagedArgs) {
+  const { message } = args;
+
+  if (stagingArea.length === 0) {
+    return respondError("No staged changes to commit. Use memory_stage first.");
+  }
+
+  const applied: Array<{ file_key: string; mode: string }> = [];
+
+  for (const change of stagingArea) {
+    await ctx.lockManager.withLock(change.filePath, async () => {
+      await fs.mkdir(path.dirname(change.filePath), { recursive: true });
+      if (change.mode === "replace") {
+        await fs.writeFile(change.filePath, change.content, "utf-8");
+      } else {
+        try {
+          await fs.access(change.filePath);
+          await fs.appendFile(change.filePath, "\n" + change.content);
+        } catch {
+          await fs.writeFile(change.filePath, change.content, "utf-8");
+        }
+      }
+      applied.push({ file_key: change.fileKey, mode: change.mode });
+    });
+  }
+
+  // Single atomic git commit for all changes
+  const commitHash = await ctx.git.commitAll("STAGED", message);
+
+  ctx.temporal.logOperation(
+    "memory_commit_staged",
+    undefined,
+    commitHash ?? undefined,
+    undefined,
+    `Committed ${applied.length} staged changes: ${message}`,
+  );
+
+  // Clear staging area
+  stagingArea.length = 0;
+
+  return respond({
+    status: "success",
+    operation: "memory_commit_staged",
+    summary: `Committed ${applied.length} staged changes: ${message}`,
+    metadata: {
+      committed: applied.length,
+      changes: applied,
+      commit_hash: commitHash,
+      message,
+    },
   });
 }

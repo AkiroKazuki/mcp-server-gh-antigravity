@@ -28,6 +28,7 @@ import {
   ResolveContradictionSchema,
   MemoryUndoSchema, ImportResearchSchema, GetResearchContextSchema,
   IngestUrlSchema,
+  MemoryStageSchema, MemoryCommitStagedSchema,
   getMemoryToolDefinitions,
 } from "./schemas.js";
 import type Database from "better-sqlite3";
@@ -35,6 +36,7 @@ import {
   type MemoryContext,
   handleSearch, handleRead, handleUpdate, handleLogDecision, handleLogLesson,
   handleSnapshot, handleContextSummary, handleHistory, handleRollback, handleDiff, handleUndo,
+  handleMemoryStage, handleMemoryCommitStaged,
   handleReindex, handleShowLocks, handleValidateMemory, handleHealthReport,
   handleDetectContradictions, handleSuggestPruning, handleApplyPruning, handleResolveContradiction,
   handleImportResearch, handleGetResearchContext, handleIngestUrl,
@@ -161,6 +163,8 @@ class MemoryServer {
       case "import_research_analysis": return await handleImportResearch(c, ImportResearchSchema.parse(args));
       case "get_research_context": return await handleGetResearchContext(c, GetResearchContextSchema.parse(args));
       case "memory_ingest_url": return await handleIngestUrl(c, IngestUrlSchema.parse(args));
+      case "memory_stage": return await handleMemoryStage(c, MemoryStageSchema.parse(args));
+      case "memory_commit_staged": return await handleMemoryCommitStaged(c, MemoryCommitStagedSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -228,7 +232,7 @@ class MemoryServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 22, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 24, version: "2.2.0" });
   }
 }
 
