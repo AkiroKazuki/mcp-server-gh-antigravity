@@ -4,7 +4,8 @@
  * Uses SQLite for persistent storage.
  */
 
-import Database from 'better-sqlite3';
+import { getConnection } from '@antigravity-os/shared';
+import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import type { OperationProfile, Bottleneck } from './types.js';
 
@@ -12,8 +13,7 @@ export class PerformanceProfiler {
   private db: Database.Database;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath, { timeout: 5000 });
-    this.db.pragma('journal_mode = WAL');
+    this.db = getConnection(dbPath);
     this.initTables();
   }
 

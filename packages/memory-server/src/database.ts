@@ -5,14 +5,13 @@
  */
 
 import Database from 'better-sqlite3';
+import { getConnection } from '@antigravity-os/shared';
 
 /**
- * Opens a better-sqlite3 database with WAL mode enabled for performance.
+ * Opens a better-sqlite3 database via shared connection manager.
  */
 export function openDatabase(dbPath: string): Database.Database {
-  const db = new Database(dbPath, { timeout: 5000 });
-  db.pragma('journal_mode = WAL');
-  return db;
+  return getConnection(dbPath);
 }
 
 /**

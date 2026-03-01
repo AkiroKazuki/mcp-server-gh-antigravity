@@ -13,7 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { FileLockManager } from "@antigravity-os/shared";
+import { FileLockManager, getConnection } from "@antigravity-os/shared";
 import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
@@ -30,7 +30,7 @@ import {
   IngestUrlSchema,
   getMemoryToolDefinitions,
 } from "./schemas.js";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import {
   type MemoryContext,
   handleSearch, handleRead, handleUpdate, handleLogDecision, handleLogLesson,
@@ -200,7 +200,7 @@ class MemoryServer {
     this.temporal = new TemporalMemory(DB_PATH, MEMORY_PATH);
 
     // Initialize idempotency cache in SQLite (survives restarts)
-    this.idempotencyDb = new Database(DB_PATH, { timeout: 5000 });
+    this.idempotencyDb = getConnection(DB_PATH);
     this.idempotencyDb.exec(`
       CREATE TABLE IF NOT EXISTS idempotency_cache (
         key TEXT PRIMARY KEY,

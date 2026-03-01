@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import Database from 'better-sqlite3';
+import { getConnection } from '@antigravity-os/shared';
+import type Database from 'better-sqlite3';
 import { parseJsonl } from '@antigravity-os/shared';
 import type { RateLimitStatus } from './types.js';
 
@@ -61,8 +62,7 @@ export class BudgetEnforcer {
         process.env.MEMORY_DIR || ".memory",
         "antigravity.db"
       );
-      this.db = new Database(dbPath, { timeout: 5000 });
-      this.db.pragma('journal_mode = WAL');
+      this.db = getConnection(dbPath);
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS rate_limits (
           operation TEXT PRIMARY KEY,

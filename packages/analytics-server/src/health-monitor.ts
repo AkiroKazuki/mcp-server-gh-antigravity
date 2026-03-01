@@ -7,7 +7,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import Database from 'better-sqlite3';
+import { getConnection } from '@antigravity-os/shared';
+import type Database from 'better-sqlite3';
 import type { HealthCheckResult, ComponentHealth } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -204,7 +205,7 @@ export class HealthMonitor {
 
       let todaySpend = 0;
       try {
-        const db = new Database(this.dbPath, { timeout: 5000 });
+        const db = getConnection(this.dbPath);
         const today = new Date().toISOString().split('T')[0];
         const row = db.prepare(
           `SELECT COALESCE(SUM(cost_usd), 0) as total FROM cost_log WHERE date = ?`

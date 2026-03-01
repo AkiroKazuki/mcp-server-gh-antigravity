@@ -15,11 +15,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { BudgetEnforcer } from "./budget-enforcer.js";
 import { PerformanceProfiler } from "./performance.js";
 import { HealthMonitor } from "./health-monitor.js";
-import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler, getConnection } from "@antigravity-os/shared";
 import {
   LogCostSchema, GetCostSummarySchema, GetInsightsSchema,
   CheckBudgetSchema, GetPerformanceProfileSchema, GetBottlenecksSchema,
@@ -186,8 +186,7 @@ class AnalyticsServer {
     await fs.mkdir(path.join(MEMORY_PATH, "config"), { recursive: true });
 
     // Initialize shared SQLite database for analytics data
-    this.db = new Database(DB_PATH, { timeout: 5000 });
-    this.db.pragma('journal_mode = WAL');
+    this.db = getConnection(DB_PATH);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cost_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

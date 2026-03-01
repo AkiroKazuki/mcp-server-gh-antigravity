@@ -4,8 +4,9 @@
  * Inlines database setup to avoid cross-package imports.
  */
 
-import Database from 'better-sqlite3';
+import { getConnection } from '@antigravity-os/shared';
 import { createHash } from 'node:crypto';
+import type Database from 'better-sqlite3';
 import type { CacheEntry } from './types.js';
 
 export class CacheManager {
@@ -17,8 +18,7 @@ export class CacheManager {
   constructor(dbPath: string, defaultTtlHours?: number) {
     this.defaultTtlHours = defaultTtlHours ?? 24;
 
-    this.db = new Database(dbPath, { timeout: 5000 });
-    this.db.pragma('journal_mode = WAL');
+    this.db = getConnection(dbPath);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS copilot_cache (

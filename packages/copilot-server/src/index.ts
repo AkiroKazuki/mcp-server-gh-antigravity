@@ -15,7 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { Validator } from "./validator.js";
 import { CacheManager } from "./cache-manager.js";
 import { ContextGatherer } from "./context-gatherer.js";
@@ -23,7 +23,7 @@ import { FailureAnalyzer } from "./failure-analyzer.js";
 import { LoopDetector } from "./loop-detector.js";
 import { CliExecutor } from "./cli-executor.js";
 import { ResearchIntegration } from "./research-integration.js";
-import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler, getConnection } from "@antigravity-os/shared";
 import {
   GeneratePromptSchema, ExecuteSchema, ValidateSchema, ScoreSchema,
   BatchExecuteSchema, PreviewSchema, GetContextSchema, CacheClearSchema,
@@ -210,7 +210,7 @@ class CopilotServer {
     await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
 
     this.cache = new CacheManager(DB_PATH);
-    this.db = new Database(DB_PATH, { timeout: 5000 });
+    this.db = getConnection(DB_PATH);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS scores (
