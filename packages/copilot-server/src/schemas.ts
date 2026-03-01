@@ -105,6 +105,13 @@ export type SuggestSkillUpdateArgs = z.infer<typeof SuggestSkillUpdateSchema>;
 export type ExecuteAndValidateArgs = z.infer<typeof ExecuteAndValidateSchema>;
 export type ImplementWithResearchArgs = z.infer<typeof ImplementWithResearchSchema>;
 
+export const DependencyGraphSchema = z.object({
+  entry_file: z.string().describe("Entry point file to start dependency analysis from"),
+  depth: z.number().optional().describe("Max depth of import resolution (default: 3)"),
+  direction: z.enum(["upstream", "downstream", "both"]).optional().describe("Direction: upstream (what this file imports), downstream (what imports this file), both (default: both)"),
+});
+export type DependencyGraphArgs = z.infer<typeof DependencyGraphSchema>;
+
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
@@ -184,6 +191,11 @@ export function getCopilotToolDefinitions() {
       name: "implement_with_research_context",
       description: "Complete workflow: Load research context → Generate prompt → Execute Copilot → Validate → Link to research. One tool call for research-based implementation.",
       inputSchema: toJsonSchema(ImplementWithResearchSchema, ["research_id", "task_description", "file_path"]),
+    },
+    {
+      name: "copilot_dependency_graph",
+      description: "Map import/require dependency graph from an entry file. Returns upstream (imported by file), downstream (files that import it), or both. Helps identify affected files for targeted context.",
+      inputSchema: toJsonSchema(DependencyGraphSchema, ["entry_file"]),
     },
   ];
 }

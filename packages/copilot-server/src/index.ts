@@ -28,7 +28,7 @@ import {
   GeneratePromptSchema, ExecuteSchema, ValidateSchema, ScoreSchema,
   BatchExecuteSchema, PreviewSchema, GetContextSchema, CacheClearSchema,
   AnalyzeFailureSchema, SuggestSkillUpdateSchema, ExecuteAndValidateSchema,
-  ImplementWithResearchSchema, getCopilotToolDefinitions,
+  ImplementWithResearchSchema, DependencyGraphSchema, getCopilotToolDefinitions,
 } from "./schemas.js";
 import {
   type CopilotContext,
@@ -36,7 +36,7 @@ import {
   handleExecute, handleBatchExecute, handleExecuteAndValidate,
   handleValidate, handleScore, handleAnalyzeFailure, handleSuggestSkillUpdate,
   handleGetContext, handleCacheClear, handleCacheStats,
-  handleImplementWithResearch,
+  handleImplementWithResearch, handleDependencyGraph,
 } from "./handlers/index.js";
 
 const log = new Logger("copilot-server");
@@ -194,6 +194,7 @@ class CopilotServer {
       case "suggest_skill_update": return await handleSuggestSkillUpdate(this.ctx, SuggestSkillUpdateSchema.parse(args));
       case "copilot_execute_and_validate": return await handleExecuteAndValidate(this.ctx, ExecuteAndValidateSchema.parse(args));
       case "implement_with_research_context": return await handleImplementWithResearch(this.ctx, ImplementWithResearchSchema.parse(args));
+      case "copilot_dependency_graph": return await handleDependencyGraph(this.ctx, DependencyGraphSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -229,7 +230,7 @@ class CopilotServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 13, prompts: 2, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 14, prompts: 2, version: "2.2.0" });
   }
 }
 

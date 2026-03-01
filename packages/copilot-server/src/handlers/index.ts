@@ -4,3 +4,4 @@ export { handleExecute, handleBatchExecute, handleExecuteAndValidate } from "./e
 export { handleValidate, handleScore, handleAnalyzeFailure, handleSuggestSkillUpdate } from "./analyze.js";
 export { handleGetContext, handleCacheClear, handleCacheStats } from "./context.js";
 export { handleImplementWithResearch } from "./research.js";
+export { handleDependencyGraph } from "./depgraph.js";
