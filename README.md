@@ -5,7 +5,7 @@
 [![CodeQL](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **47 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
+A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **49 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
 
 ## What's New in v2
 
@@ -58,7 +58,7 @@ Instead of returning full file contents, tools return compact references (`file`
          v                  v                  v
 +----------------+ +------------------+ +--------------------+
 | memory-server  | | copilot-server   | | analytics-server   |
-|  20 tools      | |  13 tools        | |  14 tools          |
+|  22 tools      | |  13 tools        | |  14 tools          |
 |                | |   2 prompts      | |   2 prompts        |
 +----------------+ +------------------+ +--------------------+
          |                  |                  |
@@ -74,7 +74,7 @@ Instead of returning full file contents, tools return compact references (`file`
 
 Manages the `.memory/` knowledge base with semantic search, git-backed persistence, temporal confidence, and file locking.
 
-**20 tools:**
+**22 tools:**
 
 | Tool | Description |
 |------|-------------|
@@ -98,6 +98,8 @@ Manages the `.memory/` knowledge base with semantic search, git-backed persisten
 | `memory_undo` | Undo recent operations via git rollback (max 10 steps) |
 | `import_research_analysis` | Import research analysis into memory with confidence scoring |
 | `get_research_context` | Retrieve research context for decision-making |
+| `resolve_contradiction` | Atomically resolve a contradiction: archive one entry, validate the other |
+| `memory_ingest_url` | Fetch a URL, convert HTML to markdown, store as research entry |
 
 ### Copilot Server (`@antigravity-os/copilot-server`)
 

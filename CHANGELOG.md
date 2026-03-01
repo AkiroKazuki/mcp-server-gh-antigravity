@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.2.0
+
+Stability, autonomy & architecture upgrade: **49 tools + 4 prompts**. Fixes critical concurrency issues, extracts handler architecture, adds autonomous code remediation and external knowledge ingestion.
+
+### Architecture & Stability
+
+- **SQLite busy timeout**: All `new Database()` calls now use `{ timeout: 5000 }` to prevent SQLITE_BUSY crashes under concurrent load
+- **Cross-process data safety**: Migrated `.jsonl` file writes (costs, scores, research outcomes) to SQLite tables with WAL mode
+- **Handler extraction**: Extracted all tool handlers from monolithic server classes into `handlers/` directories with typed context interfaces
+- **Unit testing**: Added Vitest framework with 25 tests covering temporal decay, budget enforcer, lock manager, and error handling
+- **Zod schema validation**: All 49 tools use Zod schemas for input validation with typed args (replaces `args: any`)
+- **Centralized error handling**: `withToolHandler` wrapper in shared package for consistent error formatting
+
+### Memory Server (20 -> 22 tools)
+
+**New tools:**
+- `resolve_contradiction` -- atomically resolve a contradiction: archive one entry, validate the other, log rationale
+- `memory_ingest_url` -- fetch a URL, convert HTML to markdown, store as structured research entry in temporal memory
+
+### Copilot Server (13 tools)
+
+**Enhancements:**
+- `copilot_execute_and_validate` -- added auto-heal retry loop (up to 5 retries) that feeds validation errors back as correction prompts
+- `copilot_get_context` -- AST-based context minification via ts-morph extracts only exported API surface from dependencies
+
 ## v2.1.0
 
 Research integration upgrade: **47 tools + 4 prompts**. Adds research context integration tools for enhanced decision-making and cross-server research workflow support.
