@@ -13,7 +13,9 @@
   "dependencies": {
     "@antigravity-os/shared": "2.1.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^11.0.0",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

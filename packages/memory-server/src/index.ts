@@ -18,8 +18,24 @@ import { FileLockManager } from "./lock-manager.js";
 import { GitPersistence } from "./git-persistence.js";
 import { SemanticSearch } from "./semantic-search.js";
 import { TemporalMemory } from "./temporal.js";
-import { Logger } from "@antigravity-os/shared";
+import { Logger, respond, respondError, withToolHandler } from "@antigravity-os/shared";
 import { ResearchImporter } from "./research-importer.js";
+import {
+  MemorySearchSchema, MemoryReadSchema, MemoryUpdateSchema,
+  MemoryLogDecisionSchema, MemoryLogLessonSchema, MemorySnapshotSchema,
+  ContextSummarySchema, MemoryHistorySchema, MemoryRollbackSchema,
+  MemoryDiffSchema, ReindexMemorySchema, ValidateMemorySchema,
+  DetectContradictionsSchema, SuggestPruningSchema, ApplyPruningSchema,
+  MemoryUndoSchema, ImportResearchSchema, GetResearchContextSchema,
+  getMemoryToolDefinitions,
+  type MemorySearchArgs, type MemoryReadArgs, type MemoryUpdateArgs,
+  type MemoryLogDecisionArgs, type MemoryLogLessonArgs, type MemorySnapshotArgs,
+  type ContextSummaryArgs, type MemoryHistoryArgs, type MemoryRollbackArgs,
+  type MemoryDiffArgs, type ReindexMemoryArgs, type ValidateMemoryArgs,
+  type DetectContradictionsArgs, type SuggestPruningArgs, type ApplyPruningArgs,
+  type MemoryUndoArgs, type ImportResearchArgs, type GetResearchContextArgs,
+} from "./schemas.js";
+import Database from "better-sqlite3";
 
 const log = new Logger("memory-server");
 
@@ -65,21 +81,6 @@ function getCategoryDir(key: string): string | undefined {
   return (CATEGORY_DIRS as Record<string, string>)[key];
 }
 
-// --- Helpers ---
-
-function respond(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
-}
-
-function respondError(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true,
-  };
-}
-
 // --- Server ---
 
 class MemoryServer {
@@ -89,7 +90,7 @@ class MemoryServer {
   private semantic: SemanticSearch;
   private temporal!: TemporalMemory;
   private research: ResearchImporter;
-  private idempotencyCache: Map<string, { result: unknown; timestamp: number }> = new Map();
+  private idempotencyDb!: Database.Database;
   private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
 
   constructor() {
@@ -111,257 +112,7 @@ class MemoryServer {
 
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        // --- Enhanced v1 tools ---
-        {
-          name: "memory_search",
-          description:
-            "Search across memory files with confidence ranking. Uses semantic search when available.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              query: { type: "string", description: "Search query" },
-              categories: {
-                type: "array",
-                items: { type: "string" },
-                description: 'Filter by category: "decisions", "lessons", "core", "active", "patterns", "all"',
-              },
-              top_k: { type: "number", description: "Number of results (default: 5)" },
-              min_confidence: { type: "number", description: "Minimum confidence threshold (0-1)" },
-              include_metadata: { type: "boolean", description: "Include confidence metadata in results" },
-            },
-            required: ["query"],
-          },
-        },
-        {
-          name: "memory_read",
-          description: "Read a specific memory file by name. Returns full content (no summaries unless >5000 lines). Includes confidence data.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: {
-                type: "string",
-                enum: Object.keys(FILE_MAP),
-                description: "Memory file to read",
-              },
-              chunk: {
-                type: "number",
-                description: "Chunk index for files >5000 lines (default: 0)",
-              },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "memory_update",
-          description: "Update a memory file. Thread-safe with file locking, git auto-commit, and temporal metadata.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", enum: Object.keys(FILE_MAP), description: "Memory file to update" },
-              operation: { type: "string", enum: ["append", "replace", "update_section"], description: "Type of update" },
-              content: { type: "string", description: "Content to add/update" },
-              section: { type: "string", description: "Section header to update (for update_section operation)" },
-            },
-            required: ["file", "operation", "content"],
-          },
-        },
-        {
-          name: "memory_log_decision",
-          description: "Log a structured architectural decision with confidence tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              title: { type: "string", description: "Decision title" },
-              what: { type: "string", description: "One-sentence summary" },
-              why: { type: "string", description: "Reasoning (2-3 sentences)" },
-              alternatives: { type: "array", items: { type: "string" }, description: "Options considered" },
-              impact: { type: "string", description: "What this changes" },
-              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
-            },
-            required: ["title", "what", "why"],
-          },
-        },
-        {
-          name: "memory_log_lesson",
-          description: "Log a bug fix, pattern, or anti-pattern with validation tracking. Returns: { status, summary, metadata: { file, title, temporal_entry } }",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              category: { type: "string", description: 'Category (e.g., "Python Typing")' },
-              type: { type: "string", enum: ["bug", "pattern", "anti_pattern"], description: "Type of lesson" },
-              title: { type: "string", description: "Brief description" },
-              symptom: { type: "string", description: "What went wrong (for bugs)" },
-              root_cause: { type: "string", description: "Why it happened" },
-              fix: { type: "string", description: "How we fixed it" },
-              prevention: { type: "string", description: "How to avoid in future" },
-              idempotency_key: { type: "string", description: "Unique key to prevent duplicate entries on retry" },
-            },
-            required: ["category", "type", "title"],
-          },
-        },
-        {
-          name: "memory_snapshot",
-          description: "Create a backup snapshot of all memory files with confidence data.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              tag: { type: "string", description: "Optional tag for this snapshot" },
-            },
-          },
-        },
-        {
-          name: "get_context_summary",
-          description: "Get compressed project state summary with confidence filtering.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              focus_area: { type: "string", description: '"architecture", "recent_changes", "blockers", "tech_stack"' },
-              min_confidence: { type: "number", description: "Filter by minimum confidence (0-1)" },
-            },
-          },
-        },
-        {
-          name: "memory_history",
-          description: "Get git history of a memory file with confidence evolution.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", enum: Object.keys(FILE_MAP), description: "Memory file" },
-              limit: { type: "number", description: "Number of commits (default: 10)" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "memory_rollback",
-          description: "Rollback a memory file to a previous commit. Preserves confidence metadata.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", enum: Object.keys(FILE_MAP), description: "Memory file" },
-              commit_hash: { type: "string", description: "Git commit hash from memory_history" },
-            },
-            required: ["file", "commit_hash"],
-          },
-        },
-        {
-          name: "memory_diff",
-          description: "Show what changed in a memory file including confidence changes.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", enum: Object.keys(FILE_MAP), description: "Memory file" },
-              commit_hash: { type: "string", description: "Compare to specific commit" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "reindex_memory",
-          description: "Rebuild semantic search index and sync temporal metadata from markdown.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              force: { type: "boolean", description: "Force reindex even if recently indexed" },
-            },
-          },
-        },
-        {
-          name: "show_locks",
-          description: "Show currently locked files and queue status (for debugging).",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        // --- New v2 tools ---
-        {
-          name: "validate_memory",
-          description: "Validate a memory entry to boost its confidence score.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              entry_id: { type: "string", description: "Memory entry ID to validate" },
-              notes: { type: "string", description: "Optional validation notes" },
-            },
-            required: ["entry_id"],
-          },
-        },
-        {
-          name: "memory_health_report",
-          description: "Get confidence distribution, alerts, and health score for all memory entries.",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "detect_contradictions",
-          description: "Find contradictory memory entries using semantic similarity analysis.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              category: { type: "string", description: "Filter by category" },
-              threshold: { type: "number", description: "Similarity threshold (default: 0.7)" },
-            },
-          },
-        },
-        {
-          name: "suggest_pruning",
-          description: "Get dry-run recommendations for archiving low-confidence entries.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              confidence_threshold: { type: "number", description: "Max confidence to consider (default: 0.3)" },
-              age_days: { type: "number", description: "Min age to consider (default: 90)" },
-            },
-          },
-        },
-        {
-          name: "apply_pruning",
-          description: "Archive low-confidence entries. Requires entry IDs from suggest_pruning.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              entry_ids: { type: "array", items: { type: "string" }, description: "Entry IDs to archive" },
-            },
-            required: ["entry_ids"],
-          },
-        },
-        {
-          name: "memory_undo",
-          description: "Undo recent memory operations using git rollback. Max 10 steps.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              steps: { type: "number", description: "Number of operations to undo (default: 1, max: 10)" },
-            },
-          },
-        },
-        // --- New v2.1 tools ---
-        {
-          name: "import_research_analysis",
-          description: "Import markdown analysis from Claude Sonnet research session. Intelligently parses sections and structures into memory categories. Handles variable markdown formats.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              markdown_content: { type: "string", description: "Full markdown content from Sonnet (.md file content)" },
-              title: { type: "string", description: "Research title (e.g., 'Mean Reversion EUR/USD Analysis')" },
-              tags: { type: "array", items: { type: "string" }, description: "Tags for categorization (e.g., ['mean-reversion', 'EUR/USD'])" },
-              source: { type: "string", description: "Source reference (e.g., 'Journal of Finance 2024')" },
-            },
-            required: ["markdown_content", "title"],
-          },
-        },
-        {
-          name: "get_research_context",
-          description: "Get specific research sections for implementation. Returns full content (no summaries) for use in Copilot prompts.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              research_id: { type: "string", description: "Research ID from import_research_analysis" },
-              sections: { type: "array", items: { type: "string" }, description: "Sections to retrieve (e.g., ['implementation', 'findings']). Omit for all." },
-              specific_topic: { type: "string", description: "Optional: Extract only content related to specific topic (e.g., 'stop loss')" },
-            },
-            required: ["research_id"],
-          },
-        },
-      ],
+      tools: getMemoryToolDefinitions(VALID_FILE_KEYS as string[]),
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
