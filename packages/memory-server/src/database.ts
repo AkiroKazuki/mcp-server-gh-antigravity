@@ -16,7 +16,7 @@ export function openDatabase(dbPath: string): Database.Database {
 }
 
 /**
- * Creates memory server tables: memory_entries, confidence_history, contradictions, operation_log.
+ * Creates memory server tables: memory_entries, confidence_history, contradictions, operation_log, semantic_chunks.
  */
 export function initMemoryTables(db: Database.Database): void {
   db.exec(`
@@ -82,6 +82,18 @@ export function initMemoryTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_operation_log_timestamp ON operation_log(timestamp);
     CREATE INDEX IF NOT EXISTS idx_operation_log_operation ON operation_log(operation);
+
+    CREATE TABLE IF NOT EXISTS semantic_chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file TEXT NOT NULL,
+      content TEXT NOT NULL,
+      category TEXT NOT NULL,
+      embedding BLOB NOT NULL,
+      indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_semantic_chunks_file ON semantic_chunks(file);
+    CREATE INDEX IF NOT EXISTS idx_semantic_chunks_category ON semantic_chunks(category);
   `);
 }
 

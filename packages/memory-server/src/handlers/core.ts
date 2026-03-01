@@ -266,9 +266,9 @@ export async function handleUpdate(ctx: MemoryContext, args: MemoryUpdateArgs) {
   });
 }
 
-export async function handleLogDecision(ctx: MemoryContext, args: MemoryLogDecisionArgs, checkIdempotency: (key: string) => unknown | null, storeIdempotency: (key: string, result: unknown) => void) {
+export async function handleLogDecision(ctx: MemoryContext, args: MemoryLogDecisionArgs, checkIdempotency: (key: string, opType?: string) => unknown | null, storeIdempotency: (key: string, result: unknown, opType?: string) => void) {
   if (args.idempotency_key) {
-    const cached = checkIdempotency(args.idempotency_key);
+    const cached = checkIdempotency(args.idempotency_key, "decision");
     if (cached) return cached;
   }
 
@@ -313,15 +313,15 @@ export async function handleLogDecision(ctx: MemoryContext, args: MemoryLogDecis
     });
 
     if (args.idempotency_key) {
-      storeIdempotency(args.idempotency_key, result);
+      storeIdempotency(args.idempotency_key, result, "decision");
     }
     return result;
   });
 }
 
-export async function handleLogLesson(ctx: MemoryContext, args: MemoryLogLessonArgs, checkIdempotency: (key: string) => unknown | null, storeIdempotency: (key: string, result: unknown) => void) {
+export async function handleLogLesson(ctx: MemoryContext, args: MemoryLogLessonArgs, checkIdempotency: (key: string, opType?: string) => unknown | null, storeIdempotency: (key: string, result: unknown, opType?: string) => void) {
   if (args.idempotency_key) {
-    const cached = checkIdempotency(args.idempotency_key);
+    const cached = checkIdempotency(args.idempotency_key, "lesson");
     if (cached) return cached;
   }
 
@@ -376,7 +376,7 @@ export async function handleLogLesson(ctx: MemoryContext, args: MemoryLogLessonA
     });
 
     if (args.idempotency_key) {
-      storeIdempotency(args.idempotency_key, result);
+      storeIdempotency(args.idempotency_key, result, "lesson");
     }
     return result;
   });

@@ -84,7 +84,11 @@ class MemoryServer {
   private temporal!: TemporalMemory;
   private research: ResearchImporter;
   private idempotencyDb!: Database.Database;
-  private static readonly IDEMPOTENCY_TTL_MS = 3600000; // 1 hour
+  private static readonly IDEMPOTENCY_TTL_MS: Record<string, number> = {
+    decision: 86400000, // 24 hours
+    lesson: 86400000,   // 24 hours
+    default: 3600000,   // 1 hour
+  };
 
   constructor() {
     this.server = new Server(
@@ -131,8 +135,8 @@ class MemoryServer {
 
   private async dispatch(name: string, args: unknown) {
     const c = this.ctx;
-    const checkIdem = (key: string) => this.checkIdempotency(key);
-    const storeIdem = (key: string, result: unknown) => this.storeIdempotency(key, result);
+    const checkIdem = (key: string, opType?: string) => this.checkIdempotency(key, opType);
+    const storeIdem = (key: string, result: unknown, opType?: string) => this.storeIdempotency(key, result, opType);
 
     switch (name) {
       case "memory_search": return await handleSearch(c, MemorySearchSchema.parse(args));
@@ -162,26 +166,27 @@ class MemoryServer {
     }
   }
 
-  private checkIdempotency(key: string): unknown | null {
+  private checkIdempotency(key: string, operationType: string = "default"): unknown | null {
     const row = this.idempotencyDb.prepare(
-      "SELECT result, timestamp FROM idempotency_cache WHERE key = ?"
-    ).get(key) as { result: string; timestamp: number } | undefined;
+      "SELECT result, timestamp, operation_type FROM idempotency_cache WHERE key = ?"
+    ).get(key) as { result: string; timestamp: number; operation_type: string } | undefined;
     if (!row) return null;
-    if (Date.now() - row.timestamp > MemoryServer.IDEMPOTENCY_TTL_MS) {
+    const ttl = MemoryServer.IDEMPOTENCY_TTL_MS[row.operation_type] ?? MemoryServer.IDEMPOTENCY_TTL_MS.default;
+    if (Date.now() - row.timestamp > ttl) {
       this.idempotencyDb.prepare("DELETE FROM idempotency_cache WHERE key = ?").run(key);
       return null;
     }
     return JSON.parse(row.result);
   }
 
-  private storeIdempotency(key: string, result: unknown): void {
+  private storeIdempotency(key: string, result: unknown, operationType: string = "default"): void {
     this.idempotencyDb.prepare(
-      "INSERT OR REPLACE INTO idempotency_cache (key, result, timestamp) VALUES (?, ?, ?)"
-    ).run(key, JSON.stringify(result), Date.now());
-    // Prune expired entries periodically
+      "INSERT OR REPLACE INTO idempotency_cache (key, result, timestamp, operation_type) VALUES (?, ?, ?, ?)"
+    ).run(key, JSON.stringify(result), Date.now(), operationType);
+    // Prune expired entries (use shortest TTL for cleanup)
     this.idempotencyDb.prepare(
       "DELETE FROM idempotency_cache WHERE timestamp < ?"
-    ).run(Date.now() - MemoryServer.IDEMPOTENCY_TTL_MS);
+    ).run(Date.now() - MemoryServer.IDEMPOTENCY_TTL_MS.default);
   }
 
   async run() {
@@ -200,9 +205,13 @@ class MemoryServer {
       CREATE TABLE IF NOT EXISTS idempotency_cache (
         key TEXT PRIMARY KEY,
         result TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
+        timestamp INTEGER NOT NULL,
+        operation_type TEXT NOT NULL DEFAULT 'default'
       )
     `);
+
+    // Wire semantic search to use SQLite
+    this.semantic.setDatabase(this.idempotencyDb);
 
     // Initialize git
     await this.git.init();
