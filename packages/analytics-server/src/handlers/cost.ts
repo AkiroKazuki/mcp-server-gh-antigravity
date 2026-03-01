@@ -1,6 +1,7 @@
 import { respond, respondError } from "@antigravity-os/shared";
 import type { AnalyticsContext } from "./types.js";
 import type { LogCostArgs, GetCostSummaryArgs, CheckBudgetArgs, SetRateLimitArgs } from "../schemas.js";
+import { getActiveBudgetOverride } from "./admin.js";
 
 function groupByAgent(entries: Array<{ agent: string; cost_usd: number; tokens: number }>) {
   const groups: Record<string, { cost: number; tokens: number; count: number }> = {};
@@ -64,6 +65,16 @@ export async function handleCheckBudget(ctx: AnalyticsContext, args: CheckBudget
   const { estimated_tokens: estimatedTokens, agent, operation } = args;
   const budgetResult = await ctx.budget.checkBudget(estimatedTokens, agent);
 
+  // Apply budget override if active
+  const override = getActiveBudgetOverride();
+  if (override && !budgetResult.allowed) {
+    const effectiveLimit = budgetResult.daily_limit * override.multiplier;
+    if (budgetResult.projected_total <= effectiveLimit) {
+      budgetResult.allowed = true;
+      budgetResult.warning = `Budget override active (${override.multiplier}x): ${override.reason}`;
+    }
+  }
+
   let rateLimit = null;
   if (operation) {
     rateLimit = ctx.budget.checkRateLimit(operation);
@@ -82,9 +93,13 @@ export async function handleCheckBudget(ctx: AnalyticsContext, args: CheckBudget
     status: budgetResult.allowed ? "success" : "budget_exceeded",
     operation: "check_budget",
     summary: budgetResult.allowed
-      ? `Budget OK: $${budgetResult.projected_total.toFixed(4)}/$${budgetResult.daily_limit}`
+      ? `Budget OK: $${budgetResult.projected_total.toFixed(4)}/$${budgetResult.daily_limit}${override ? ` (override: ${override.multiplier}x)` : ""}`
       : `Budget EXCEEDED: $${budgetResult.projected_total.toFixed(4)}/$${budgetResult.daily_limit}`,
-    metadata: { budget: budgetResult, rate_limit: rateLimit },
+    metadata: {
+      budget: budgetResult,
+      rate_limit: rateLimit,
+      ...(override ? { budget_override: { multiplier: override.multiplier, reason: override.reason, expires_at: new Date(override.expiresAt).toISOString() } } : {}),
+    },
     ...(budgetResult.warning ? { warnings: [budgetResult.warning] } : {}),
   });
 }

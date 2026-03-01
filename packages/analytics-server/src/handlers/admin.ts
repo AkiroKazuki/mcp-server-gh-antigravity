@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { respond, respondError } from "@antigravity-os/shared";
 import type { AnalyticsContext } from "./types.js";
-import type { ExportAnalyticsArgs, LogResearchOutcomeArgs } from "../schemas.js";
+import type { ExportAnalyticsArgs, LogResearchOutcomeArgs, SetBudgetOverrideArgs } from "../schemas.js";
 
 export async function handleExportAnalytics(ctx: AnalyticsContext, args: ExportAnalyticsArgs) {
   const include = args.include ?? ["costs", "performance", "scores", "health"];
@@ -108,5 +108,57 @@ export async function handleLogResearchOutcome(ctx: AnalyticsContext, args: LogR
       outcome,
       metrics,
     },
+  });
+}
+
+// --- Budget Override ---
+
+interface BudgetOverride {
+  reason: string;
+  multiplier: number;
+  expiresAt: number;
+  createdAt: string;
+}
+
+let activeBudgetOverride: BudgetOverride | null = null;
+
+/** Check if there's an active (non-expired) budget override. */
+export function getActiveBudgetOverride(): BudgetOverride | null {
+  if (!activeBudgetOverride) return null;
+  if (Date.now() > activeBudgetOverride.expiresAt) {
+    activeBudgetOverride = null;
+    return null;
+  }
+  return activeBudgetOverride;
+}
+
+export async function handleSetBudgetOverride(_ctx: AnalyticsContext, args: SetBudgetOverrideArgs) {
+  const { reason } = args;
+  const multiplier = args.multiplier ?? 2;
+  const durationMinutes = args.duration_minutes ?? 60;
+
+  activeBudgetOverride = {
+    reason,
+    multiplier,
+    expiresAt: Date.now() + durationMinutes * 60 * 1000,
+    createdAt: new Date().toISOString(),
+  };
+
+  const expiresAt = new Date(activeBudgetOverride.expiresAt).toISOString();
+
+  return respond({
+    status: "success",
+    operation: "set_budget_override",
+    summary: `Budget override active: ${multiplier}x limits for ${durationMinutes}min`,
+    metadata: {
+      reason,
+      multiplier,
+      duration_minutes: durationMinutes,
+      expires_at: expiresAt,
+      created_at: activeBudgetOverride.createdAt,
+    },
+    ...(multiplier >= 3 ? {
+      warnings: [`High multiplier (${multiplier}x) — monitor spend closely`],
+    } : {}),
   });
 }

@@ -24,6 +24,7 @@ import {
   LogCostSchema, GetCostSummarySchema, GetInsightsSchema,
   CheckBudgetSchema, GetPerformanceProfileSchema, GetBottlenecksSchema,
   ExportAnalyticsSchema, SetRateLimitSchema, LogResearchOutcomeSchema,
+  SetBudgetOverrideSchema,
   getAnalyticsToolDefinitions,
 } from "./schemas.js";
 import {
@@ -32,7 +33,7 @@ import {
   handleSetRateLimit, handleGetRateLimitStatus,
   handleGetCopilotPerformance, handleGetInsights, handleGetPerformanceProfile,
   handleSystemHealth, handleGetSkillEffectiveness, handleGetBottlenecks,
-  handleExportAnalytics, handleLogResearchOutcome,
+  handleExportAnalytics, handleLogResearchOutcome, handleSetBudgetOverride,
 } from "./handlers/index.js";
 
 const log = new Logger("analytics-server");
@@ -172,6 +173,7 @@ class AnalyticsServer {
       case "set_rate_limit": return await handleSetRateLimit(this.ctx, SetRateLimitSchema.parse(args));
       case "get_rate_limit_status": return await handleGetRateLimitStatus(this.ctx);
       case "log_research_outcome": return await handleLogResearchOutcome(this.ctx, LogResearchOutcomeSchema.parse(args));
+      case "set_budget_override": return await handleSetBudgetOverride(this.ctx, SetBudgetOverrideSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -227,7 +229,7 @@ class AnalyticsServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 14, prompts: 2, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 15, prompts: 2, version: "2.2.0" });
   }
 }
 

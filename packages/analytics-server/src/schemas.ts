@@ -73,6 +73,13 @@ export type ExportAnalyticsArgs = z.infer<typeof ExportAnalyticsSchema>;
 export type SetRateLimitArgs = z.infer<typeof SetRateLimitSchema>;
 export type LogResearchOutcomeArgs = z.infer<typeof LogResearchOutcomeSchema>;
 
+export const SetBudgetOverrideSchema = z.object({
+  reason: z.string().describe("Reason for budget override (e.g., 'critical rollback in progress')"),
+  multiplier: z.number().min(1).max(5).optional().describe("Budget limit multiplier (default: 2, max: 5)"),
+  duration_minutes: z.number().int().min(5).max(480).optional().describe("Override duration in minutes (default: 60, max: 480)"),
+});
+export type SetBudgetOverrideArgs = z.infer<typeof SetBudgetOverrideSchema>;
+
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
@@ -157,6 +164,11 @@ export function getAnalyticsToolDefinitions() {
       name: "log_research_outcome",
       description: "Log whether research-based implementation worked in practice. Updates research confidence based on real-world outcomes.",
       inputSchema: toJsonSchema(LogResearchOutcomeSchema, ["research_id", "implementation_file", "outcome"]),
+    },
+    {
+      name: "set_budget_override",
+      description: "Temporarily increase budget limits for critical operations (e.g., rollbacks, hotfixes). Auto-expires after duration. Multiplier applies to daily/weekly/monthly limits.",
+      inputSchema: toJsonSchema(SetBudgetOverrideSchema, ["reason"]),
     },
   ];
 }
