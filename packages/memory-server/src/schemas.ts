@@ -94,6 +94,12 @@ export const ApplyPruningSchema = z.object({
   entry_ids: z.array(z.string()).describe("Entry IDs to archive"),
 });
 
+export const ResolveContradictionSchema = z.object({
+  entry_id_to_keep: z.string().describe("ID of the entry to keep and boost confidence for"),
+  entry_id_to_archive: z.string().describe("ID of the contradicting entry to archive"),
+  resolution_rationale: z.string().describe("Explanation of why this entry was chosen over the other"),
+});
+
 export const MemoryUndoSchema = z.object({
   steps: z.number().optional().describe("Number of operations to undo (default: 1, max: 10)"),
 });
@@ -128,6 +134,7 @@ export type ValidateMemoryArgs = z.infer<typeof ValidateMemorySchema>;
 export type DetectContradictionsArgs = z.infer<typeof DetectContradictionsSchema>;
 export type SuggestPruningArgs = z.infer<typeof SuggestPruningSchema>;
 export type ApplyPruningArgs = z.infer<typeof ApplyPruningSchema>;
+export type ResolveContradictionArgs = z.infer<typeof ResolveContradictionSchema>;
 export type MemoryUndoArgs = z.infer<typeof MemoryUndoSchema>;
 export type ImportResearchArgs = z.infer<typeof ImportResearchSchema>;
 export type GetResearchContextArgs = z.infer<typeof GetResearchContextSchema>;
@@ -263,6 +270,11 @@ export function getMemoryToolDefinitions(fileKeys: string[]) {
       name: "apply_pruning",
       description: "Archive low-confidence entries. Requires entry IDs from suggest_pruning.",
       inputSchema: toJsonSchema(ApplyPruningSchema, ["entry_ids"]),
+    },
+    {
+      name: "resolve_contradiction",
+      description: "Atomically resolve a contradiction: archive one entry, boost the other's confidence, and log the rationale. All in a single transaction.",
+      inputSchema: toJsonSchema(ResolveContradictionSchema, ["entry_id_to_keep", "entry_id_to_archive", "resolution_rationale"]),
     },
     {
       name: "memory_undo",

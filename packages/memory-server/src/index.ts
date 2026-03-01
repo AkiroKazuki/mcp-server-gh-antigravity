@@ -25,6 +25,7 @@ import {
   ContextSummarySchema, MemoryHistorySchema, MemoryRollbackSchema,
   MemoryDiffSchema, ReindexMemorySchema, ValidateMemorySchema,
   DetectContradictionsSchema, SuggestPruningSchema, ApplyPruningSchema,
+  ResolveContradictionSchema,
   MemoryUndoSchema, ImportResearchSchema, GetResearchContextSchema,
   getMemoryToolDefinitions,
 } from "./schemas.js";
@@ -34,7 +35,7 @@ import {
   handleSearch, handleRead, handleUpdate, handleLogDecision, handleLogLesson,
   handleSnapshot, handleContextSummary, handleHistory, handleRollback, handleDiff, handleUndo,
   handleReindex, handleShowLocks, handleValidateMemory, handleHealthReport,
-  handleDetectContradictions, handleSuggestPruning, handleApplyPruning,
+  handleDetectContradictions, handleSuggestPruning, handleApplyPruning, handleResolveContradiction,
   handleImportResearch, handleGetResearchContext,
 } from "./handlers/index.js";
 
@@ -150,6 +151,7 @@ class MemoryServer {
       case "detect_contradictions": return await handleDetectContradictions(c, DetectContradictionsSchema.parse(args));
       case "suggest_pruning": return await handleSuggestPruning(c, SuggestPruningSchema.parse(args));
       case "apply_pruning": return await handleApplyPruning(c, ApplyPruningSchema.parse(args));
+      case "resolve_contradiction": return await handleResolveContradiction(c, ResolveContradictionSchema.parse(args));
       case "memory_undo": return await handleUndo(c, MemoryUndoSchema.parse(args));
       case "import_research_analysis": return await handleImportResearch(c, ImportResearchSchema.parse(args));
       case "get_research_context": return await handleGetResearchContext(c, GetResearchContextSchema.parse(args));
@@ -215,7 +217,7 @@ class MemoryServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 20, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 21, version: "2.1.0" });
   }
 }
 

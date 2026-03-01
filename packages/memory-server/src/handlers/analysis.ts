@@ -1,6 +1,6 @@
 import { respond, respondError } from "@antigravity-os/shared";
 import type { MemoryContext } from "./types.js";
-import type { DetectContradictionsArgs, SuggestPruningArgs, ApplyPruningArgs } from "../schemas.js";
+import type { DetectContradictionsArgs, SuggestPruningArgs, ApplyPruningArgs, ResolveContradictionArgs } from "../schemas.js";
 
 export async function handleDetectContradictions(ctx: MemoryContext, args: DetectContradictionsArgs) {
   const { category } = args;
@@ -131,6 +131,27 @@ export async function handleApplyPruning(ctx: MemoryContext, args: ApplyPruningA
     metadata: {
       archived: result.archived,
       entry_ids: entryIds,
+      commit_hash: commitHash,
+    },
+  });
+}
+
+export async function handleResolveContradiction(ctx: MemoryContext, args: ResolveContradictionArgs) {
+  const { entry_id_to_keep: keepId, entry_id_to_archive: archiveId, resolution_rationale: rationale } = args;
+
+  const result = ctx.temporal.resolveContradiction(keepId, archiveId, rationale);
+  const commitHash = await ctx.git.commitAll("RESOLVE", `Resolved contradiction: kept ${keepId}, archived ${archiveId}`);
+
+  return respond({
+    status: "success",
+    operation: "resolve_contradiction",
+    summary: `Resolved: kept "${result.kept.content.slice(0, 60)}..." (confidence: ${result.new_confidence.toFixed(2)})`,
+    metadata: {
+      kept_entry_id: keepId,
+      archived_entry_id: archiveId,
+      new_confidence: result.new_confidence,
+      confidence_status: result.status,
+      rationale,
       commit_hash: commitHash,
     },
   });
