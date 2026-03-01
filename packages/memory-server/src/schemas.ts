@@ -160,6 +160,13 @@ export const MemoryCommitStagedSchema = z.object({
 });
 export type MemoryCommitStagedArgs = z.infer<typeof MemoryCommitStagedSchema>;
 
+export const MemoryAutoValidateSchema = z.object({
+  category: z.string().optional().describe("Category to auto-validate (default: all)"),
+  min_age_days: z.number().optional().describe("Only validate entries older than N days (default: 7)"),
+  dry_run: z.boolean().optional().describe("Preview changes without applying (default: false)"),
+});
+export type MemoryAutoValidateArgs = z.infer<typeof MemoryAutoValidateSchema>;
+
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
@@ -326,6 +333,11 @@ export function getMemoryToolDefinitions(fileKeys: string[]) {
       name: "memory_commit_staged",
       description: "Commit all staged memory changes as a single atomic git commit. Clears the staging area after commit.",
       inputSchema: toJsonSchema(MemoryCommitStagedSchema, ["message"]),
+    },
+    {
+      name: "memory_auto_validate",
+      description: "Auto-validate memory entries by cross-referencing with copilot performance data. Boosts confidence of entries associated with successful outcomes and decays entries with poor results.",
+      inputSchema: toJsonSchema(MemoryAutoValidateSchema),
     },
   ];
 }

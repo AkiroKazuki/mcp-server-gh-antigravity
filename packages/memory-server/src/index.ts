@@ -29,6 +29,7 @@ import {
   MemoryUndoSchema, ImportResearchSchema, GetResearchContextSchema,
   IngestUrlSchema,
   MemoryStageSchema, MemoryCommitStagedSchema,
+  MemoryAutoValidateSchema,
   getMemoryToolDefinitions,
 } from "./schemas.js";
 import type Database from "better-sqlite3";
@@ -39,6 +40,7 @@ import {
   handleMemoryStage, handleMemoryCommitStaged,
   handleReindex, handleShowLocks, handleValidateMemory, handleHealthReport,
   handleDetectContradictions, handleSuggestPruning, handleApplyPruning, handleResolveContradiction,
+  handleMemoryAutoValidate,
   handleImportResearch, handleGetResearchContext, handleIngestUrl,
 } from "./handlers/index.js";
 
@@ -165,6 +167,7 @@ class MemoryServer {
       case "memory_ingest_url": return await handleIngestUrl(c, IngestUrlSchema.parse(args));
       case "memory_stage": return await handleMemoryStage(c, MemoryStageSchema.parse(args));
       case "memory_commit_staged": return await handleMemoryCommitStaged(c, MemoryCommitStagedSchema.parse(args));
+      case "memory_auto_validate": return await handleMemoryAutoValidate(c, MemoryAutoValidateSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -232,7 +235,7 @@ class MemoryServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 24, version: "2.2.0" });
+    log.info("Running on stdio", { tools: 25, version: "2.2.0" });
   }
 }
 

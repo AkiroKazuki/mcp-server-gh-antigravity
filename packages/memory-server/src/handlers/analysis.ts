@@ -1,6 +1,6 @@
 import { respond, respondError } from "@antigravity-os/shared";
 import type { MemoryContext } from "./types.js";
-import type { DetectContradictionsArgs, SuggestPruningArgs, ApplyPruningArgs, ResolveContradictionArgs } from "../schemas.js";
+import type { DetectContradictionsArgs, SuggestPruningArgs, ApplyPruningArgs, ResolveContradictionArgs, MemoryAutoValidateArgs } from "../schemas.js";
 
 export async function handleDetectContradictions(ctx: MemoryContext, args: DetectContradictionsArgs) {
   const { category } = args;
@@ -194,5 +194,97 @@ export async function handleResolveContradiction(ctx: MemoryContext, args: Resol
       rationale,
       commit_hash: commitHash,
     },
+  });
+}
+
+export async function handleMemoryAutoValidate(ctx: MemoryContext, args: MemoryAutoValidateArgs) {
+  const minAgeDays = args.min_age_days ?? 7;
+  const dryRun = args.dry_run ?? false;
+
+  const entries = ctx.temporal.getAllEntries(args.category);
+  const now = Date.now();
+  const minAgeMs = minAgeDays * 24 * 60 * 60 * 1000;
+
+  const boosted: Array<{ id: string; content: string; old_confidence: number; new_confidence: number; reason: string }> = [];
+  const decayed: Array<{ id: string; content: string; old_confidence: number; new_confidence: number; reason: string }> = [];
+  const skipped: string[] = [];
+
+  for (const entry of entries) {
+    const entryAge = now - new Date(entry.created_at).getTime();
+    if (entryAge < minAgeMs) {
+      skipped.push(entry.id);
+      continue;
+    }
+
+    const daysSinceValidation = (now - new Date(entry.last_validated).getTime()) / (1000 * 60 * 60 * 24);
+
+    // Boost: entries with high validation count and no contradictions that haven't been validated recently
+    if (entry.validation_count >= 2 && entry.contradiction_count === 0 && daysSinceValidation > 14) {
+      if (!dryRun) {
+        const result = ctx.temporal.validateEntry(entry.id, "auto-validation: consistent high-quality entry");
+        boosted.push({
+          id: entry.id,
+          content: entry.content.slice(0, 80),
+          old_confidence: entry.confidence,
+          new_confidence: result.new_confidence,
+          reason: "High validation count, no contradictions, stale validation date",
+        });
+      } else {
+        boosted.push({
+          id: entry.id,
+          content: entry.content.slice(0, 80),
+          old_confidence: entry.confidence,
+          new_confidence: entry.confidence, // unknown in dry run
+          reason: "Would boost: high validation count, no contradictions",
+        });
+      }
+      continue;
+    }
+
+    // Decay: entries never validated with contradictions, or very old with no validations
+    if (
+      (entry.validation_count === 0 && entry.contradiction_count > 0) ||
+      (entry.validation_count === 0 && daysSinceValidation > 60)
+    ) {
+      const reason = entry.contradiction_count > 0
+        ? `Never validated with ${entry.contradiction_count} contradiction(s)`
+        : `Never validated, ${Math.floor(daysSinceValidation)} days stale`;
+
+      if (!dryRun) {
+        ctx.temporal.recordContradiction(entry.id, entry.contradiction_count + 1);
+        decayed.push({
+          id: entry.id,
+          content: entry.content.slice(0, 80),
+          old_confidence: entry.confidence,
+          new_confidence: ctx.temporal.getEntry(entry.id)?.confidence ?? entry.confidence,
+          reason,
+        });
+      } else {
+        decayed.push({
+          id: entry.id,
+          content: entry.content.slice(0, 80),
+          old_confidence: entry.confidence,
+          new_confidence: entry.confidence,
+          reason: `Would decay: ${reason}`,
+        });
+      }
+    }
+  }
+
+  return respond({
+    status: "success",
+    operation: "memory_auto_validate",
+    summary: `${dryRun ? "[DRY RUN] " : ""}Processed ${entries.length} entries: ${boosted.length} boosted, ${decayed.length} decayed, ${skipped.length} skipped (too recent)`,
+    metadata: {
+      total_entries: entries.length,
+      boosted: boosted.length,
+      decayed: decayed.length,
+      skipped: skipped.length,
+      min_age_days: minAgeDays,
+      dry_run: dryRun,
+      ...(boosted.length > 0 ? { boosted_entries: boosted } : {}),
+      ...(decayed.length > 0 ? { decayed_entries: decayed } : {}),
+    },
+    ...(dryRun ? { next_steps: ["Run again with dry_run: false to apply changes"] } : {}),
   });
 }
