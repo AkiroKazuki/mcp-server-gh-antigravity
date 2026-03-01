@@ -139,6 +139,14 @@ export type MemoryUndoArgs = z.infer<typeof MemoryUndoSchema>;
 export type ImportResearchArgs = z.infer<typeof ImportResearchSchema>;
 export type GetResearchContextArgs = z.infer<typeof GetResearchContextSchema>;
 
+export const IngestUrlSchema = z.object({
+  url: z.string().url().describe("URL to fetch and ingest (HTML page or raw markdown)"),
+  title: z.string().describe("Title for the ingested research entry"),
+  tags: z.array(z.string()).optional().describe("Tags to categorize the research (e.g., ['api', 'typescript'])"),
+  max_length: z.number().int().min(1000).max(100000).optional().describe("Max content length in characters (default: 50000)"),
+});
+export type IngestUrlArgs = z.infer<typeof IngestUrlSchema>;
+
 // --- JSON Schema generation helper ---
 
 function toJsonSchema(schema: z.ZodType, required?: string[]) {
@@ -290,6 +298,11 @@ export function getMemoryToolDefinitions(fileKeys: string[]) {
       name: "get_research_context",
       description: "Get specific research sections for implementation. Returns full content (no summaries) for use in Copilot prompts.",
       inputSchema: toJsonSchema(GetResearchContextSchema, ["research_id"]),
+    },
+    {
+      name: "memory_ingest_url",
+      description: "Fetch a URL (documentation, API reference, article), convert HTML to markdown, and store as a research entry in temporal memory. Enables autonomous learning of new libraries and APIs.",
+      inputSchema: toJsonSchema(IngestUrlSchema, ["url", "title"]),
     },
   ];
 }

@@ -27,6 +27,7 @@ import {
   DetectContradictionsSchema, SuggestPruningSchema, ApplyPruningSchema,
   ResolveContradictionSchema,
   MemoryUndoSchema, ImportResearchSchema, GetResearchContextSchema,
+  IngestUrlSchema,
   getMemoryToolDefinitions,
 } from "./schemas.js";
 import Database from "better-sqlite3";
@@ -36,7 +37,7 @@ import {
   handleSnapshot, handleContextSummary, handleHistory, handleRollback, handleDiff, handleUndo,
   handleReindex, handleShowLocks, handleValidateMemory, handleHealthReport,
   handleDetectContradictions, handleSuggestPruning, handleApplyPruning, handleResolveContradiction,
-  handleImportResearch, handleGetResearchContext,
+  handleImportResearch, handleGetResearchContext, handleIngestUrl,
 } from "./handlers/index.js";
 
 const log = new Logger("memory-server");
@@ -155,6 +156,7 @@ class MemoryServer {
       case "memory_undo": return await handleUndo(c, MemoryUndoSchema.parse(args));
       case "import_research_analysis": return await handleImportResearch(c, ImportResearchSchema.parse(args));
       case "get_research_context": return await handleGetResearchContext(c, GetResearchContextSchema.parse(args));
+      case "memory_ingest_url": return await handleIngestUrl(c, IngestUrlSchema.parse(args));
       default:
         return respondError(`Unknown tool: ${name}`);
     }
@@ -217,7 +219,7 @@ class MemoryServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 21, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 22, version: "2.1.0" });
   }
 }
 

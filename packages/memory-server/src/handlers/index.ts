@@ -3,4 +3,4 @@ export { handleSearch, handleRead, handleUpdate, handleLogDecision, handleLogLes
 export { handleSnapshot, handleContextSummary, handleHistory, handleRollback, handleDiff, handleUndo } from "./snapshot.js";
 export { handleReindex, handleShowLocks, handleValidateMemory, handleHealthReport } from "./maintenance.js";
 export { handleDetectContradictions, handleSuggestPruning, handleApplyPruning, handleResolveContradiction } from "./analysis.js";
-export { handleImportResearch, handleGetResearchContext } from "./research.js";
+export { handleImportResearch, handleGetResearchContext, handleIngestUrl } from "./research.js";
