@@ -76,6 +76,7 @@ export const ExecuteAndValidateSchema = z.object({
   output_file: z.string().describe("Where to save generated code"),
   requirements: z.array(z.string()).optional().describe("Requirements to validate (e.g., ['Type hints', 'Handle None values'])"),
   auto_approve_if_valid: z.boolean().optional().describe("Automatically accept if validation passes (default: false)"),
+  max_retries: z.number().int().min(0).max(5).optional().describe("Max auto-heal retries on validation failure (default: 3, 0 to disable)"),
 });
 
 export const ImplementWithResearchSchema = z.object({

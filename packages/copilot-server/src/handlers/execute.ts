@@ -128,6 +128,7 @@ export async function handleExecuteAndValidate(ctx: CopilotContext, args: Execut
   const { prompt_file: promptFile, output_file: outputFile } = args;
   const requirements = args.requirements ?? [];
   const autoApprove = args.auto_approve_if_valid ?? false;
+  const maxRetries = args.max_retries ?? 3;
 
   const taskId = `${promptFile}:${outputFile}`;
 
@@ -177,15 +178,48 @@ export async function handleExecuteAndValidate(ctx: CopilotContext, args: Execut
   // Execute Copilot CLI
   log.info("Running copilot_execute_and_validate", { prompt_file: promptFile, output_file: outputFile });
 
-  const result = await ctx.cliExecutor.execute(promptContent);
+  let result = await ctx.cliExecutor.execute(promptContent);
+  let validation = ctx.validator.validate(result.code, requirements);
+  const healAttempts: Array<{ attempt: number; issues: unknown[] }> = [];
+
+  // Auto-heal loop: retry with correction prompt on validation failure
+  let attempt = 0;
+  while (!validation.valid && attempt < maxRetries && result.source === "cli") {
+    attempt++;
+    log.info("Auto-heal: retrying after validation failure", {
+      attempt,
+      max_retries: maxRetries,
+      issue_count: validation.issues.length,
+    });
+
+    healAttempts.push({ attempt, issues: validation.issues });
+
+    const issuesSummary = validation.issues
+      .map((i) => `- [${i.severity}] Line ${i.line ?? "?"}: ${i.message}`)
+      .join("\n");
+
+    const correctionPrompt = [
+      "The following code has validation issues that must be fixed:",
+      "",
+      "=== ORIGINAL CODE ===",
+      result.code,
+      "=== END CODE ===",
+      "",
+      "=== VALIDATION ISSUES ===",
+      issuesSummary,
+      "=== END ISSUES ===",
+      "",
+      "Rewrite the code to fix ALL listed issues. Output only the corrected code.",
+    ].join("\n");
+
+    result = await ctx.cliExecutor.execute(correctionPrompt);
+    validation = ctx.validator.validate(result.code, requirements);
+  }
 
   // Write output
   const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
   await fs.mkdir(path.dirname(outPath), { recursive: true });
   await fs.writeFile(outPath, result.code, "utf-8");
-
-  // Validate
-  const validation = ctx.validator.validate(result.code, requirements);
 
   // Cache if valid
   if (validation.valid) {
@@ -201,14 +235,20 @@ export async function handleExecuteAndValidate(ctx: CopilotContext, args: Execut
     status: validation.valid ? "success" : "validation_failed",
     operation: "copilot_execute_and_validate",
     summary: validation.valid
-      ? `Generated and validated ${outputFile} (${result.lines_generated} lines)`
-      : `Generated ${outputFile} but validation FAILED`,
+      ? `Generated and validated ${outputFile} (${result.lines_generated} lines)${healAttempts.length > 0 ? ` after ${healAttempts.length} auto-heal attempt(s)` : ""}`
+      : `Generated ${outputFile} but validation FAILED after ${healAttempts.length} auto-heal attempt(s)`,
     metadata: {
       output_file: outputFile,
       prompt_file: promptFile,
       source: result.source,
       lines_generated: result.lines_generated,
       execution_time_ms: result.execution_time_ms,
+      auto_heal: {
+        enabled: maxRetries > 0,
+        attempts: healAttempts.length,
+        max_retries: maxRetries,
+        history: healAttempts,
+      },
       validation: {
         passed: validation.valid,
         issues: validation.issues,
