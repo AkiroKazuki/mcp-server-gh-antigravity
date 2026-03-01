@@ -30,17 +30,27 @@ export async function handleDetectContradictions(ctx: MemoryContext, args: Detec
   }> = [];
 
   let checkedPairs = 0;
+  const seenPairs = new Set<string>();
 
-  for (let i = 0; i < entries.length; i++) {
-    for (let j = i + 1; j < entries.length; j++) {
-      checkedPairs++;
-      const similarity = await ctx.semantic.pairwiseSimilarity(
-        entries[i].content, entries[j].content
-      );
+  // Cluster-first: for each entry, find similar entries via semantic index
+  // then only check those pairs for contradictions (near O(n) vs O(n²))
+  const useCluster = ctx.semantic.isReady() && ctx.semantic.hasIndex();
 
-      if (similarity >= threshold) {
-        const c1 = entries[i].content.toLowerCase();
-        const c2 = entries[j].content.toLowerCase();
+  if (useCluster) {
+    for (const entry of entries) {
+      const similar = await ctx.semantic.findSimilar(entry.content, 10, threshold);
+      for (const match of similar) {
+        // Find the matching entry by file + content overlap
+        const matchEntry = entries.find((e) => e.file === match.file && e.id !== entry.id && e.content.includes(match.content.slice(0, 50)));
+        if (!matchEntry) continue;
+
+        const pairKey = [entry.id, matchEntry.id].sort().join(":");
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        checkedPairs++;
+
+        const c1 = entry.content.toLowerCase();
+        const c2 = matchEntry.content.toLowerCase();
 
         let conflictType = "similar_content";
         for (const [a, b] of conflictPairs) {
@@ -51,11 +61,41 @@ export async function handleDetectContradictions(ctx: MemoryContext, args: Detec
         }
 
         contradictions.push({
-          entry1: { id: entries[i].id, file: entries[i].file, preview: entries[i].content.slice(0, 100), confidence: entries[i].confidence },
-          entry2: { id: entries[j].id, file: entries[j].file, preview: entries[j].content.slice(0, 100), confidence: entries[j].confidence },
-          similarity: parseFloat(similarity.toFixed(3)),
+          entry1: { id: entry.id, file: entry.file, preview: entry.content.slice(0, 100), confidence: entry.confidence },
+          entry2: { id: matchEntry.id, file: matchEntry.file, preview: matchEntry.content.slice(0, 100), confidence: matchEntry.confidence },
+          similarity: parseFloat(match.similarity.toFixed(3)),
           conflict_type: conflictType,
         });
+      }
+    }
+  } else {
+    // Fallback: pairwise comparison when semantic index unavailable
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        checkedPairs++;
+        const similarity = await ctx.semantic.pairwiseSimilarity(
+          entries[i].content, entries[j].content
+        );
+
+        if (similarity >= threshold) {
+          const c1 = entries[i].content.toLowerCase();
+          const c2 = entries[j].content.toLowerCase();
+
+          let conflictType = "similar_content";
+          for (const [a, b] of conflictPairs) {
+            if ((c1.includes(a) && c2.includes(b)) || (c1.includes(b) && c2.includes(a))) {
+              conflictType = "direct";
+              break;
+            }
+          }
+
+          contradictions.push({
+            entry1: { id: entries[i].id, file: entries[i].file, preview: entries[i].content.slice(0, 100), confidence: entries[i].confidence },
+            entry2: { id: entries[j].id, file: entries[j].file, preview: entries[j].content.slice(0, 100), confidence: entries[j].confidence },
+            similarity: parseFloat(similarity.toFixed(3)),
+            conflict_type: conflictType,
+          });
+        }
       }
     }
   }
@@ -68,13 +108,13 @@ export async function handleDetectContradictions(ctx: MemoryContext, args: Detec
   return respond({
     status: "success",
     operation: "detect_contradictions",
-    summary: `Found ${contradictions.length} potential contradictions in ${checkedPairs} pairs`,
-    metadata: { contradictions, checked_pairs: checkedPairs, threshold },
+    summary: `Found ${contradictions.length} potential contradictions in ${checkedPairs} pairs${useCluster ? " (cluster-first)" : " (pairwise)"}`,
+    metadata: { contradictions, checked_pairs: checkedPairs, threshold, method: useCluster ? "cluster" : "pairwise" },
     ...(contradictions.length > 0 ? {
       next_steps: [
         "Review each contradiction and resolve by updating or archiving one entry",
+        "Use resolve_contradiction to atomically keep one and archive the other",
         "Use validate_memory to boost the correct entry's confidence",
-        "Use apply_pruning to remove the incorrect entry",
       ],
     } : {}),
   });
