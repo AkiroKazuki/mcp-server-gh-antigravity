@@ -117,34 +117,32 @@ class MemoryServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      try {
+      return withToolHandler(log, name, async () => {
         switch (name) {
-          case "memory_search": return await this.handleSearch(args);
-          case "memory_read": return await this.handleRead(args);
-          case "memory_update": return await this.handleUpdate(args);
-          case "memory_log_decision": return await this.handleLogDecision(args);
-          case "memory_log_lesson": return await this.handleLogLesson(args);
-          case "memory_snapshot": return await this.handleSnapshot(args);
-          case "get_context_summary": return await this.handleContextSummary(args);
-          case "memory_history": return await this.handleHistory(args);
-          case "memory_rollback": return await this.handleRollback(args);
-          case "memory_diff": return await this.handleDiff(args);
-          case "reindex_memory": return await this.handleReindex(args);
+          case "memory_search": return await this.handleSearch(MemorySearchSchema.parse(args));
+          case "memory_read": return await this.handleRead(MemoryReadSchema.parse(args));
+          case "memory_update": return await this.handleUpdate(MemoryUpdateSchema.parse(args));
+          case "memory_log_decision": return await this.handleLogDecision(MemoryLogDecisionSchema.parse(args));
+          case "memory_log_lesson": return await this.handleLogLesson(MemoryLogLessonSchema.parse(args));
+          case "memory_snapshot": return await this.handleSnapshot(MemorySnapshotSchema.parse(args));
+          case "get_context_summary": return await this.handleContextSummary(ContextSummarySchema.parse(args));
+          case "memory_history": return await this.handleHistory(MemoryHistorySchema.parse(args));
+          case "memory_rollback": return await this.handleRollback(MemoryRollbackSchema.parse(args));
+          case "memory_diff": return await this.handleDiff(MemoryDiffSchema.parse(args));
+          case "reindex_memory": return await this.handleReindex(ReindexMemorySchema.parse(args));
           case "show_locks": return await this.handleShowLocks();
-          case "validate_memory": return await this.handleValidateMemory(args);
+          case "validate_memory": return await this.handleValidateMemory(ValidateMemorySchema.parse(args));
           case "memory_health_report": return await this.handleHealthReport();
-          case "detect_contradictions": return await this.handleDetectContradictions(args);
-          case "suggest_pruning": return await this.handleSuggestPruning(args);
-          case "apply_pruning": return await this.handleApplyPruning(args);
-          case "memory_undo": return await this.handleUndo(args);
-          case "import_research_analysis": return await this.handleImportResearch(args);
-          case "get_research_context": return await this.handleGetResearchContext(args);
+          case "detect_contradictions": return await this.handleDetectContradictions(DetectContradictionsSchema.parse(args));
+          case "suggest_pruning": return await this.handleSuggestPruning(SuggestPruningSchema.parse(args));
+          case "apply_pruning": return await this.handleApplyPruning(ApplyPruningSchema.parse(args));
+          case "memory_undo": return await this.handleUndo(MemoryUndoSchema.parse(args));
+          case "import_research_analysis": return await this.handleImportResearch(ImportResearchSchema.parse(args));
+          case "get_research_context": return await this.handleGetResearchContext(GetResearchContextSchema.parse(args));
           default:
             return respondError(`Unknown tool: ${name}`);
         }
-      } catch (error: any) {
-        return respondError(`Error: ${error.message}`);
-      }
+      });
     });
   }
 
@@ -152,12 +150,11 @@ class MemoryServer {
   // Enhanced v1 handlers
   // =========================================================================
 
-  private async handleSearch(args: any) {
-    const query: string = args.query;
-    const categories: string[] = args.categories || ["all"];
-    const topK: number = args.top_k || 5;
-    const minConfidence: number | undefined = args.min_confidence;
-    const includeMetadata: boolean = args.include_metadata ?? false;
+  private async handleSearch(args: MemorySearchArgs) {
+    const { query, min_confidence: minConfidence } = args;
+    const categories = args.categories ?? ["all"];
+    const topK = args.top_k ?? 5;
+    const includeMetadata = args.include_metadata ?? false;
 
     // Try semantic search first
     try {
@@ -265,8 +262,8 @@ class MemoryServer {
     return results.slice(0, topK);
   }
 
-  private async handleRead(args: any) {
-    const fileKey: string = args.file;
+  private async handleRead(args: MemoryReadArgs) {
+    const fileKey = args.file;
     const relPath = getFilePath(fileKey);
     if (!relPath) {
       return respondError(`Unknown file: ${fileKey}. Available: ${Object.keys(FILE_MAP).join(", ")}`);
@@ -330,11 +327,8 @@ class MemoryServer {
     }
   }
 
-  private async handleUpdate(args: any) {
-    const fileKey: string = args.file;
-    const operation: string = args.operation;
-    const content: string = args.content;
-    const section: string | undefined = args.section;
+  private async handleUpdate(args: MemoryUpdateArgs) {
+    const { file: fileKey, operation, content, section } = args;
 
     const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
@@ -404,7 +398,7 @@ class MemoryServer {
     }
   }
 
-  private async handleLogDecision(args: any) {
+  private async handleLogDecision(args: MemoryLogDecisionArgs) {
     // Idempotency check
     if (args.idempotency_key) {
       const cached = this.checkIdempotency(args.idempotency_key);
@@ -459,7 +453,7 @@ class MemoryServer {
     });
   }
 
-  private async handleLogLesson(args: any) {
+  private async handleLogLesson(args: MemoryLogLessonArgs) {
     // Idempotency check
     if (args.idempotency_key) {
       const cached = this.checkIdempotency(args.idempotency_key);
@@ -523,7 +517,7 @@ class MemoryServer {
     });
   }
 
-  private async handleSnapshot(args: any) {
+  private async handleSnapshot(args: MemorySnapshotArgs) {
     const tag = args?.tag || "";
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const snapshotName = tag ? `snapshot_${tag}_${timestamp}.json` : `snapshot_${timestamp}.json`;
@@ -569,9 +563,9 @@ class MemoryServer {
     });
   }
 
-  private async handleContextSummary(args: any) {
-    const focusArea: string | undefined = args?.focus_area;
-    const minConfidence: number = args?.min_confidence ?? 0;
+  private async handleContextSummary(args: ContextSummaryArgs) {
+    const focusArea = args.focus_area;
+    const minConfidence = args.min_confidence ?? 0;
 
     const summary: Record<string, any> = {};
 
@@ -617,9 +611,9 @@ class MemoryServer {
     });
   }
 
-  private async handleHistory(args: any) {
-    const fileKey: string = args.file;
-    const limit: number = args.limit || 10;
+  private async handleHistory(args: MemoryHistoryArgs) {
+    const fileKey = args.file;
+    const limit = args.limit ?? 10;
     const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
@@ -634,9 +628,8 @@ class MemoryServer {
     });
   }
 
-  private async handleRollback(args: any) {
-    const fileKey: string = args.file;
-    const commitHash: string = args.commit_hash;
+  private async handleRollback(args: MemoryRollbackArgs) {
+    const { file: fileKey, commit_hash: commitHash } = args;
     const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
@@ -655,9 +648,8 @@ class MemoryServer {
     });
   }
 
-  private async handleDiff(args: any) {
-    const fileKey: string = args.file;
-    const commitHash: string | undefined = args.commit_hash;
+  private async handleDiff(args: MemoryDiffArgs) {
+    const { file: fileKey, commit_hash: commitHash } = args;
     const relPath = getFilePath(fileKey);
     if (!relPath) return respondError(`Unknown file: ${fileKey}`);
 
@@ -672,7 +664,7 @@ class MemoryServer {
     });
   }
 
-  private async handleReindex(args: any) {
+  private async handleReindex(_args: ReindexMemoryArgs) {
     // Sync temporal metadata from markdown files
     const newEntries = await this.temporal.syncFromMarkdown();
 
@@ -718,9 +710,8 @@ class MemoryServer {
   // New v2 handlers
   // =========================================================================
 
-  private async handleValidateMemory(args: any) {
-    const entryId: string = args.entry_id;
-    const notes: string | undefined = args.notes;
+  private async handleValidateMemory(args: ValidateMemoryArgs) {
+    const { entry_id: entryId, notes } = args;
 
     const result = this.temporal.validateEntry(entryId, notes);
 
