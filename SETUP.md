@@ -75,10 +75,10 @@ After restart, Claude Desktop should show the MCP tools in the tool list. You ca
 
 > "List all available MCP tools"
 
-You should see **49 tools** and **4 prompts** across 3 servers:
-- Memory server: 22 tools
-- Copilot server: 13 tools + 2 prompts
-- Analytics server: 14 tools + 2 prompts
+You should see **54 tools** and **4 prompts** across 3 servers:
+- Memory server: 25 tools
+- Copilot server: 14 tools + 2 prompts
+- Analytics server: 15 tools + 2 prompts
 
 ## Temporal Memory (v2)
 

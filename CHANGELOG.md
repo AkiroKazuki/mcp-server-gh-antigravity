@@ -2,7 +2,7 @@
 
 ## v2.2.0
 
-Stability, autonomy & architecture upgrade: **49 tools + 4 prompts**. Fixes critical concurrency issues, extracts handler architecture, adds autonomous code remediation and external knowledge ingestion.
+Stability, autonomy & architecture upgrade: **54 tools + 4 prompts**. Fixes critical concurrency issues, extracts handler architecture, adds autonomous code remediation, external knowledge ingestion, and infrastructure hardening.
 
 ### Architecture & Stability
 
@@ -10,20 +10,37 @@ Stability, autonomy & architecture upgrade: **49 tools + 4 prompts**. Fixes crit
 - **Cross-process data safety**: Migrated `.jsonl` file writes (costs, scores, research outcomes) to SQLite tables with WAL mode
 - **Handler extraction**: Extracted all tool handlers from monolithic server classes into `handlers/` directories with typed context interfaces
 - **Unit testing**: Added Vitest framework with 25 tests covering temporal decay, budget enforcer, lock manager, and error handling
-- **Zod schema validation**: All 49 tools use Zod schemas for input validation with typed args (replaces `args: any`)
+- **Zod schema validation**: All 54 tools use Zod schemas for input validation with typed args (replaces `args: any`)
 - **Centralized error handling**: `withToolHandler` wrapper in shared package for consistent error formatting
+- **Semantic index migration**: Moved semantic index from flat JSON file to SQLite `semantic_chunks` table with BLOB embeddings for incremental updates
+- **Database connection pooling**: Shared `DatabaseManager` in `@antigravity-os/shared` for reference-counted connection reuse across servers
+- **Operation-specific idempotency TTLs**: Decisions and lessons use 24h TTL; default operations use 1h TTL
 
-### Memory Server (20 -> 22 tools)
+### Memory Server (20 -> 25 tools)
 
 **New tools:**
 - `resolve_contradiction` -- atomically resolve a contradiction: archive one entry, validate the other, log rationale
 - `memory_ingest_url` -- fetch a URL, convert HTML to markdown, store as structured research entry in temporal memory
+- `memory_stage` -- stage a memory change without committing to git for atomic multi-file updates
+- `memory_commit_staged` -- commit all staged changes as a single atomic git commit
+- `memory_auto_validate` -- auto-validate entries by boosting high-quality and decaying stale/contradicted entries
 
-### Copilot Server (13 tools)
+**Enhancements:**
+- `detect_contradictions` -- cluster-first approach using semantic similarity (near O(n) vs O(n²) pairwise)
+
+### Copilot Server (13 -> 14 tools)
+
+**New tools:**
+- `copilot_dependency_graph` -- map import dependency graph (upstream/downstream) from an entry file
 
 **Enhancements:**
 - `copilot_execute_and_validate` -- added auto-heal retry loop (up to 5 retries) that feeds validation errors back as correction prompts
 - `copilot_get_context` -- AST-based context minification via ts-morph extracts only exported API surface from dependencies
+
+### Analytics Server (14 -> 15 tools)
+
+**New tools:**
+- `set_budget_override` -- emergency budget override with multiplier, reason, and expiry; integrates with `check_budget`
 
 ## v2.1.0
 

@@ -5,7 +5,7 @@
 [![CodeQL](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **49 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
+A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **54 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
 
 ## What's New in v2
 
@@ -58,7 +58,7 @@ Instead of returning full file contents, tools return compact references (`file`
          v                  v                  v
 +----------------+ +------------------+ +--------------------+
 | memory-server  | | copilot-server   | | analytics-server   |
-|  22 tools      | |  13 tools        | |  14 tools          |
+|  25 tools      | |  14 tools        | |  15 tools          |
 |                | |   2 prompts      | |   2 prompts        |
 +----------------+ +------------------+ +--------------------+
          |                  |                  |
@@ -74,7 +74,7 @@ Instead of returning full file contents, tools return compact references (`file`
 
 Manages the `.memory/` knowledge base with semantic search, git-backed persistence, temporal confidence, and file locking.
 
-**22 tools:**
+**25 tools:**
 
 | Tool | Description |
 |------|-------------|
@@ -100,12 +100,15 @@ Manages the `.memory/` knowledge base with semantic search, git-backed persisten
 | `get_research_context` | Retrieve research context for decision-making |
 | `resolve_contradiction` | Atomically resolve a contradiction: archive one entry, validate the other |
 | `memory_ingest_url` | Fetch a URL, convert HTML to markdown, store as research entry |
+| `memory_stage` | Stage a memory change without committing to git |
+| `memory_commit_staged` | Commit all staged changes as a single atomic git commit |
+| `memory_auto_validate` | Auto-validate entries: boost high-quality, decay stale/contradicted |
 
 ### Copilot Server (`@antigravity-os/copilot-server`)
 
 Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, caching, and failure analysis.
 
-**13 tools + 2 prompts:**
+**14 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -122,6 +125,7 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 | `suggest_skill_update` | Propose skill file changes based on failure analysis |
 | `copilot_execute_and_validate` | Execute and validate in a single operation |
 | `implement_with_research_context` | Implement code changes with research context integration |
+| `copilot_dependency_graph` | Map import dependency graph (upstream/downstream) from entry file |
 
 | Prompt | Description |
 |--------|-------------|
@@ -132,7 +136,7 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 
 Cost tracking, performance profiling, budget enforcement, rate limiting, and system health monitoring.
 
-**14 tools + 2 prompts:**
+**15 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -150,6 +154,7 @@ Cost tracking, performance profiling, budget enforcement, rate limiting, and sys
 | `set_rate_limit` | Configure sliding window rate limits |
 | `get_rate_limit_status` | Current rate limit config and usage |
 | `log_research_outcome` | Log research outcomes and their effectiveness |
+| `set_budget_override` | Emergency budget override with multiplier and expiry |
 
 | Prompt | Description |
 |--------|-------------|
