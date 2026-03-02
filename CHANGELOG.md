@@ -1,5 +1,101 @@
 # Changelog
 
+## v2.2.1
+
+Stability and security patch. Fixes all critical audit findings and resolves npm vulnerability alerts.
+
+### Bug Fixes
+
+- **Dependency graph**: Fixed infinite recursion on circular imports (added visited set)
+- **AST extractor**: Fixed memory leak — source files are now removed after extraction
+- **Semantic reindex**: Atomic transaction prevents data loss if indexing fails midway
+- **Staging area**: `finally` block ensures staging is cleared even on partial failure
+- **CLI executor**: Temp file cleanup moved to `finally` block (no more leaked files)
+- **Research metadata**: File locking prevents race conditions on concurrent writes
+- **Database manager**: Guard against negative ref counts; WAL pragma failure no longer leaks connections
+- **Lock manager**: Resolve lock promise on release (fixes potential deadlocks)
+- **Temporal memory**: Safe JSON.parse in `rowToEntry` with fallback to `[]` on corrupt data
+- **Health monitor**: Bounds check on `df` output parsing prevents NaN
+- **Budget enforcer**: Cost log queries now filter in SQL instead of loading all rows
+- **Error handling**: Replaced `catch (error: any)` with `catch (error: unknown)` across all servers
+
+### Security
+
+- Upgraded `glob` 10.5 → 13.0.6 (resolves minimatch ReDoS CVEs)
+- Upgraded `hono` and `minimatch` to patched versions
+- `npm audit` reports 0 vulnerabilities
+
+### Housekeeping
+
+- Removed unused imports (`parseJsonl`, `Database` type)
+- Added `FileLockManager` to analytics server context
+- Added try-catch around analytics export queries
+
+## v2.2.0
+
+Stability, autonomy & architecture upgrade: **54 tools + 4 prompts**. Fixes critical concurrency issues, extracts handler architecture, adds autonomous code remediation, external knowledge ingestion, and infrastructure hardening.
+
+### Architecture & Stability
+
+- **SQLite busy timeout**: All `new Database()` calls now use `{ timeout: 5000 }` to prevent SQLITE_BUSY crashes under concurrent load
+- **Cross-process data safety**: Migrated `.jsonl` file writes (costs, scores, research outcomes) to SQLite tables with WAL mode
+- **Handler extraction**: Extracted all tool handlers from monolithic server classes into `handlers/` directories with typed context interfaces
+- **Unit testing**: Added Vitest framework with 25 tests covering temporal decay, budget enforcer, lock manager, and error handling
+- **Zod schema validation**: All 54 tools use Zod schemas for input validation with typed args (replaces `args: any`)
+- **Centralized error handling**: `withToolHandler` wrapper in shared package for consistent error formatting
+- **Semantic index migration**: Moved semantic index from flat JSON file to SQLite `semantic_chunks` table with BLOB embeddings for incremental updates
+- **Database connection pooling**: Shared `DatabaseManager` in `@antigravity-os/shared` for reference-counted connection reuse across servers
+- **Operation-specific idempotency TTLs**: Decisions and lessons use 24h TTL; default operations use 1h TTL
+
+### Memory Server (20 -> 25 tools)
+
+**New tools:**
+- `resolve_contradiction` -- atomically resolve a contradiction: archive one entry, validate the other, log rationale
+- `memory_ingest_url` -- fetch a URL, convert HTML to markdown, store as structured research entry in temporal memory
+- `memory_stage` -- stage a memory change without committing to git for atomic multi-file updates
+- `memory_commit_staged` -- commit all staged changes as a single atomic git commit
+- `memory_auto_validate` -- auto-validate entries by boosting high-quality and decaying stale/contradicted entries
+
+**Enhancements:**
+- `detect_contradictions` -- cluster-first approach using semantic similarity (near O(n) vs O(n²) pairwise)
+
+### Copilot Server (13 -> 14 tools)
+
+**New tools:**
+- `copilot_dependency_graph` -- map import dependency graph (upstream/downstream) from an entry file
+
+**Enhancements:**
+- `copilot_execute_and_validate` -- added auto-heal retry loop (up to 5 retries) that feeds validation errors back as correction prompts
+- `copilot_get_context` -- AST-based context minification via ts-morph extracts only exported API surface from dependencies
+
+### Analytics Server (14 -> 15 tools)
+
+**New tools:**
+- `set_budget_override` -- emergency budget override with multiplier, reason, and expiry; integrates with `check_budget`
+
+## v2.1.0
+
+Research integration upgrade: **47 tools + 4 prompts**. Adds research context integration tools for enhanced decision-making and cross-server research workflow support.
+
+### Memory Server (18 -> 20 tools)
+
+**New tools:**
+- `import_research_analysis` -- import research analysis into memory with confidence scoring
+- `get_research_context` -- retrieve research context for decision-making
+
+### Copilot Server (11 -> 13 tools)
+
+**New tools:**
+- `copilot_execute_and_validate` -- execute and validate in a single operation for streamlined workflow
+- `implement_with_research_context` -- implement code changes with research context integration
+
+### Analytics Server (13 -> 14 tools)
+
+**New tools:**
+- `log_research_outcome` -- log research outcomes and their effectiveness for analytics tracking
+
+---
+
 ## v2.0.0
 
 Major upgrade: 24 tools -> **42 tools + 4 prompts**. Adds temporal memory, response caching, failure analysis, performance profiling, rate limiting, and system health monitoring.

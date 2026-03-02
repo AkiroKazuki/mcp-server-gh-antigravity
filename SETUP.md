@@ -1,4 +1,4 @@
-# Setup Guide — Antigravity OS v2.0 MCP Servers (macOS)
+# Setup Guide — Antigravity OS MCP Servers
 
 ## Prerequisites
 
@@ -75,10 +75,10 @@ After restart, Claude Desktop should show the MCP tools in the tool list. You ca
 
 > "List all available MCP tools"
 
-You should see **42 tools** and **4 prompts** across 3 servers:
-- Memory server: 18 tools
-- Copilot server: 11 tools + 2 prompts
-- Analytics server: 13 tools + 2 prompts
+You should see **54 tools** and **4 prompts** across 3 servers:
+- Memory server: 25 tools
+- Copilot server: 14 tools + 2 prompts
+- Analytics server: 15 tools + 2 prompts
 
 ## Temporal Memory (v2)
 
@@ -313,9 +313,13 @@ If any step fails, check the Troubleshooting section above.
 
 ## Budget Override
 
-When you hit a budget limit mid-task, the `check_budget` tool will block further operations. To temporarily override:
+When you hit a budget limit mid-task, the `check_budget` tool will block further operations. You can use the `set_budget_override` tool to temporarily increase limits:
 
-Edit `.memory/config/budget.json`:
+```
+set_budget_override(reason="critical refactoring", multiplier=2.0, duration_hours=4)
+```
+
+Alternatively, edit `.memory/config/budget.json` directly:
 
 ```json
 {

@@ -19,3 +19,10 @@ packages/*/build/
 *.swo
 *~
 .DS_Store
+
+# User data - should not be committed
+.memory/
+.skills/
+
+# Audit notes
+AUDIT_FINDINGS.md

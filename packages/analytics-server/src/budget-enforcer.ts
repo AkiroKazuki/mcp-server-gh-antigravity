@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import Database from 'better-sqlite3';
-import { parseJsonl } from '@antigravity-os/shared';
+import { getConnection } from '@antigravity-os/shared';
+import type Database from 'better-sqlite3';
 import type { RateLimitStatus } from './types.js';
 
 interface BudgetConfig {
@@ -61,8 +61,7 @@ export class BudgetEnforcer {
         process.env.MEMORY_DIR || ".memory",
         "antigravity.db"
       );
-      this.db = new Database(dbPath);
-      this.db.pragma('journal_mode = WAL');
+      this.db = getConnection(dbPath);
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS rate_limits (
           operation TEXT PRIMARY KEY,
@@ -205,60 +204,72 @@ export class BudgetEnforcer {
   }
 
   async getSpendForDate(date: string): Promise<number> {
-    const entries = await this.readCostLog();
-    return entries
-      .filter((e) => e.date === date)
-      .reduce((sum, e) => sum + e.cost_usd, 0);
+    try {
+      const db = this.getDb();
+      const row = db.prepare(
+        `SELECT COALESCE(SUM(cost_usd), 0) as total FROM cost_log WHERE date = ?`
+      ).get(date) as { total: number } | undefined;
+      return row?.total ?? 0;
+    } catch {
+      return 0;
+    }
   }
 
   async getSpendForPeriod(
     period: "today" | "week" | "month" | "all"
   ): Promise<{ total_cost: number; total_tokens: number; entries: CostEntry[] }> {
-    const entries = await this.readCostLog();
     const now = new Date();
     const today = now.toISOString().split("T")[0];
 
-    let filtered: CostEntry[];
+    try {
+      const db = this.getDb();
+      let filtered: CostEntry[];
 
-    switch (period) {
-      case "today":
-        filtered = entries.filter((e) => e.date === today);
-        break;
-      case "week": {
-        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const weekStr = weekAgo.toISOString().split("T")[0];
-        filtered = entries.filter((e) => e.date >= weekStr);
-        break;
+      switch (period) {
+        case "today":
+          filtered = db.prepare(
+            `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log WHERE date = ? ORDER BY rowid`
+          ).all(today) as CostEntry[];
+          break;
+        case "week": {
+          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          const weekStr = weekAgo.toISOString().split("T")[0];
+          filtered = db.prepare(
+            `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log WHERE date >= ? ORDER BY rowid`
+          ).all(weekStr) as CostEntry[];
+          break;
+        }
+        case "month": {
+          const monthStr = today.slice(0, 7);
+          filtered = db.prepare(
+            `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log WHERE date LIKE ? ORDER BY rowid`
+          ).all(monthStr + '%') as CostEntry[];
+          break;
+        }
+        case "all":
+        default:
+          filtered = db.prepare(
+            `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log ORDER BY rowid`
+          ).all() as CostEntry[];
+          break;
       }
-      case "month": {
-        const monthStr = today.slice(0, 7);
-        filtered = entries.filter((e) => e.date.startsWith(monthStr));
-        break;
-      }
-      case "all":
-      default:
-        filtered = entries;
-        break;
+
+      return {
+        total_cost: filtered.reduce((sum, e) => sum + e.cost_usd, 0),
+        total_tokens: filtered.reduce((sum, e) => sum + e.tokens, 0),
+        entries: filtered,
+      };
+    } catch {
+      return { total_cost: 0, total_tokens: 0, entries: [] };
     }
-
-    return {
-      total_cost: filtered.reduce((sum, e) => sum + e.cost_usd, 0),
-      total_tokens: filtered.reduce((sum, e) => sum + e.tokens, 0),
-      entries: filtered,
-    };
   }
 
   async readCostLog(): Promise<CostEntry[]> {
-    const logFile = path.join(
-      this.projectRoot,
-      ".memory",
-      "snapshots",
-      "costs.jsonl"
-    );
-
     try {
-      const content = await fs.readFile(logFile, "utf-8");
-      return parseJsonl<CostEntry>(content).entries;
+      const db = this.getDb();
+      return db.prepare(
+        `SELECT date, agent, tokens, cost_usd, task_description, timestamp FROM cost_log ORDER BY rowid`
+      ).all() as CostEntry[];
     } catch {
       return [];
     }

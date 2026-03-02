@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { extractApiSurface } from './ast-extractor.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,7 +53,10 @@ export class ContextGatherer {
 
             if (maxDepth > 0) {
               try {
-                const sigs = await this.extractSignatures(resolved);
+                // Use AST-based extraction for minified API surface
+                const depContent = await fs.readFile(resolved, 'utf-8');
+                const astSurface = extractApiSurface(resolved, depContent);
+                const sigs = astSurface ?? await this.extractSignatures(resolved);
                 if (sigs.trim()) {
                   sections.push('  ```');
                   sections.push('  ' + sigs.split('\n').join('\n  '));

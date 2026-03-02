@@ -1,36 +1,39 @@
-# Antigravity OS v2.0 — MCP Server System
+# Antigravity OS — MCP Server System
 
-A TypeScript monorepo containing 3 MCP (Model Context Protocol) servers that power the Antigravity OS AI development workflow. **42 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
+[![CI](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/security.yml)
+[![CodeQL](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkiroKazuki/mcp-server-gh-antigravity/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
-## What's New in v2
+A TypeScript monorepo containing 3 MCP ([Model Context Protocol](https://modelcontextprotocol.io)) servers that power the Antigravity OS AI development workflow. **54 tools + 4 prompts** across memory management, copilot orchestration, and analytics.
 
-| Area | v1 | v2 |
-|------|----|----|
-| Total tools | 24 | **42** |
-| Prompts | 2 | **4** |
-| Memory entries | Static markdown | **Temporal with confidence scoring and decay** |
-| Contradiction detection | -- | **Semantic pairwise comparison** |
-| Memory health | -- | **Health reports, pruning, undo** |
-| Response caching | -- | **SQLite-backed cache with hit/miss stats** |
-| Failure analysis | -- | **Root cause diagnosis + skill update suggestions** |
-| Context gathering | Single file | **Multi-file (imports, types, git diffs)** |
-| Performance profiling | -- | **p50/p95/p99 percentiles** |
-| System health | -- | **Disk, git, index, budget, DB checks** |
-| Rate limiting | -- | **Sliding window (per minute/hour/day)** |
-| Cost prediction | -- | **Trend analysis with confidence ranges** |
-| Undo | Git rollback per file | **Operation-level undo via git** |
+## Highlights
+
+| Feature | Description |
+|---------|-------------|
+| **54 tools + 4 prompts** | Memory (25), Copilot (14 + 2 prompts), Analytics (15 + 2 prompts) |
+| **Temporal memory** | Confidence scoring with automatic decay, validation, and contradiction detection |
+| **Semantic search** | Local embeddings via `@xenova/transformers` — no external API calls |
+| **Git-backed persistence** | Every `.memory/` change is committed; full history, diff, and rollback |
+| **Budget enforcement** | Hard daily/weekly/monthly cost limits with emergency overrides |
+| **AST context minification** | Extracts only exported API surface from dependencies to save tokens |
+| **Auto-healing code gen** | Retry loop feeds validation errors back as correction prompts |
+| **Dependency graphing** | Map upstream/downstream import relationships |
+| **Response caching** | SQLite-backed cache avoids regenerating validated results |
+| **Concurrent write safety** | File-level locks + SQLite WAL mode across all 3 servers |
 
 ## Key Features
 
-- **Abstract Response Pattern** -- 80-90% token savings by returning structured references instead of raw content
-- **Budget Enforcement** -- hard daily/weekly/monthly cost limits prevent runaway spend
-- **Git-Backed Persistence** -- every `.memory/` change is committed; full history, diff, and rollback
-- **Temporal Memory** -- confidence scoring with automatic decay; validate, prune, and detect contradictions
-- **Semantic Search** -- local embeddings via `@xenova/transformers` find meaning, not just keywords
-- **Response Caching** -- SQLite-backed cache avoids regenerating validated results
-- **Concurrent Write Locking** -- file-level locks ensure parallel tool calls never corrupt data
-- **Loop Detection** -- detects repeated identical operations and stops infinite retries
-- **Rate Limiting** -- sliding window rate limits per operation
+- **Abstract Response Pattern** — 80–90% token savings by returning structured references instead of raw content
+- **Budget Enforcement** — hard daily/weekly/monthly cost limits prevent runaway spend
+- **Git-Backed Persistence** — every `.memory/` change is committed; full history, diff, and rollback
+- **Temporal Memory** — confidence scoring with automatic decay; validate, prune, and detect contradictions
+- **Semantic Search** — local embeddings via `@xenova/transformers` find meaning, not just keywords
+- **Response Caching** — SQLite-backed cache avoids regenerating validated results
+- **Concurrent Write Locking** — file-level locks ensure parallel tool calls never corrupt data
+- **Loop Detection** — detects repeated identical operations and stops infinite retries
+- **Rate Limiting** — sliding window rate limits per operation
 
 ## Token Economics
 
@@ -45,23 +48,24 @@ Instead of returning full file contents, tools return compact references (`file`
 ## Architecture
 
 ```
-+-----------------------------------------------------------------+
-|                    Antigravity (Claude)                          |
-|                    Primary orchestrator                         |
-+--------+------------------+------------------+------------------+
-         | MCP stdio        | MCP stdio        | MCP stdio
-         v                  v                  v
-+----------------+ +------------------+ +--------------------+
-| memory-server  | | copilot-server   | | analytics-server   |
-|  18 tools      | |  11 tools        | |  13 tools          |
-|                | |   2 prompts      | |   2 prompts        |
-+----------------+ +------------------+ +--------------------+
-         |                  |                  |
-         v                  v                  v
-    .memory/          .memory/prompts/    .memory/snapshots/
-    antigravity.db    (templates)         (JSONL + exports)
-    (markdown+SQLite) (generated)
++------------------------------------------------------------------+
+|                    MCP Client (e.g. Claude Desktop)               |
++--------+-------------------+-------------------+-----------------+
+         | MCP stdio         | MCP stdio         | MCP stdio
+         v                   v                   v
++------------------+ +------------------+ +--------------------+
+| memory-server    | | copilot-server   | | analytics-server   |
+|  25 tools        | |  14 tools        | |  15 tools          |
+|                  | |   2 prompts      | |   2 prompts        |
++------------------+ +------------------+ +--------------------+
+         |                   |                   |
+         +-------------------+-------------------+
+                             |
+                     .memory/antigravity.db
+                     (shared SQLite, WAL mode)
 ```
+
+All three servers are independent Node.js processes communicating via MCP stdio transport. They share a single SQLite database coordinated by WAL mode and a reference-counted connection manager.
 
 ## Servers
 
@@ -69,7 +73,7 @@ Instead of returning full file contents, tools return compact references (`file`
 
 Manages the `.memory/` knowledge base with semantic search, git-backed persistence, temporal confidence, and file locking.
 
-**18 tools:**
+**25 tools:**
 
 | Tool | Description |
 |------|-------------|
@@ -91,12 +95,19 @@ Manages the `.memory/` knowledge base with semantic search, git-backed persisten
 | `suggest_pruning` | Dry-run recommendations for archiving low-confidence entries |
 | `apply_pruning` | Archive entries from suggest_pruning |
 | `memory_undo` | Undo recent operations via git rollback (max 10 steps) |
+| `import_research_analysis` | Import research analysis into memory with confidence scoring |
+| `get_research_context` | Retrieve research context for decision-making |
+| `resolve_contradiction` | Atomically resolve a contradiction: archive one entry, validate the other |
+| `memory_ingest_url` | Fetch a URL, convert HTML to markdown, store as research entry |
+| `memory_stage` | Stage a memory change without committing to git |
+| `memory_commit_staged` | Commit all staged changes as a single atomic git commit |
+| `memory_auto_validate` | Auto-validate entries: boost high-quality, decay stale/contradicted |
 
 ### Copilot Server (`@antigravity-os/copilot-server`)
 
 Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, caching, and failure analysis.
 
-**11 tools + 2 prompts:**
+**14 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -111,6 +122,9 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 | `copilot_cache_stats` | Cache hit/miss statistics |
 | `analyze_failure` | Diagnose why a prompt failed |
 | `suggest_skill_update` | Propose skill file changes based on failure analysis |
+| `copilot_execute_and_validate` | Execute and validate in a single operation |
+| `implement_with_research_context` | Implement code changes with research context integration |
+| `copilot_dependency_graph` | Map import dependency graph (upstream/downstream) from entry file |
 
 | Prompt | Description |
 |--------|-------------|
@@ -121,7 +135,7 @@ Orchestrates GitHub Copilot CLI -- prompt generation, validation, scoring, cachi
 
 Cost tracking, performance profiling, budget enforcement, rate limiting, and system health monitoring.
 
-**13 tools + 2 prompts:**
+**15 tools + 2 prompts:**
 
 | Tool | Description |
 |------|-------------|
@@ -138,6 +152,8 @@ Cost tracking, performance profiling, budget enforcement, rate limiting, and sys
 | `export_analytics` | Export analytics data as JSON |
 | `set_rate_limit` | Configure sliding window rate limits |
 | `get_rate_limit_status` | Current rate limit config and usage |
+| `log_research_outcome` | Log research outcomes and their effectiveness |
+| `set_budget_override` | Emergency budget override with multiplier and expiry |
 
 | Prompt | Description |
 |--------|-------------|
@@ -226,13 +242,10 @@ Created automatically on first run:
 ├── prompts/
 │   ├── templates/      # Copilot prompt templates
 │   └── generated/      # Generated prompts
-├── snapshots/          # Backups, costs, scores, exports
-│   ├── costs.jsonl
-│   └── scores.jsonl
+├── snapshots/          # Backups and exports
 ├── config/
 │   └── budget.json     # Budget limits
-├── antigravity.db      # SQLite (metadata, cache, performance logs)
-└── semantic-index.json # Vector search index
+└── antigravity.db      # SQLite (metadata, cache, costs, scores, embeddings)
 ```
 
 ## .skills/ Directory
@@ -252,22 +265,38 @@ Create these in your project root alongside `.memory/`. See [SETUP.md](SETUP.md)
 
 | Package | Purpose |
 |---------|---------|
-| `better-sqlite3` | SQLite database for metadata, cache, performance logs, and temporal memory |
+| `better-sqlite3` | SQLite database with WAL mode for metadata, cache, embeddings, and analytics |
 | `@xenova/transformers` | Local embedding model for semantic search (no API calls) |
-| `@modelcontextprotocol/sdk` | MCP protocol implementation (^1.12.1) |
+| `@modelcontextprotocol/sdk` | MCP protocol implementation |
+| `ts-morph` | TypeScript AST parsing for context minification |
+| `zod` | Schema validation for all tool inputs |
 
 ## Development
 
 ```bash
-# Watch mode for a specific package
-npm run dev -w @antigravity-os/memory-server
+# Install dependencies
+npm install
+
+# Build all packages (shared builds first)
+npm run build
+
+# Run unit tests (Vitest)
+npm test
+
+# Run smoke tests (verifies all servers start and expose correct tool counts)
+node test-all.mjs
+
+# Watch mode
+npm run test:watch
 
 # Clean build artifacts
 npm run clean
-
-# Rebuild everything
-npm run clean && npm run build
-
-# Run all tests
-npm test
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, coding standards, and PR guidelines.
+
+## License
+
+[MIT](LICENSE) © AkiroKazuki

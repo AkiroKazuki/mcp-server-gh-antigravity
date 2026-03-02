@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type Database from "better-sqlite3";
 import { Validator } from "./validator.js";
 import { CacheManager } from "./cache-manager.js";
 import { ContextGatherer } from "./context-gatherer.js";
@@ -22,7 +23,21 @@ import { FailureAnalyzer } from "./failure-analyzer.js";
 import { LoopDetector } from "./loop-detector.js";
 import { CliExecutor } from "./cli-executor.js";
 import { ResearchIntegration } from "./research-integration.js";
-import { getEfficiencyRulesPrompt, Logger, InputValidator } from "@antigravity-os/shared";
+import { getEfficiencyRulesPrompt, Logger, respondError, withToolHandler, getConnection } from "@antigravity-os/shared";
+import {
+  GeneratePromptSchema, ExecuteSchema, ValidateSchema, ScoreSchema,
+  BatchExecuteSchema, PreviewSchema, GetContextSchema, CacheClearSchema,
+  AnalyzeFailureSchema, SuggestSkillUpdateSchema, ExecuteAndValidateSchema,
+  ImplementWithResearchSchema, DependencyGraphSchema, getCopilotToolDefinitions,
+} from "./schemas.js";
+import {
+  type CopilotContext,
+  handleGeneratePrompt, handlePreview,
+  handleExecute, handleBatchExecute, handleExecuteAndValidate,
+  handleValidate, handleScore, handleAnalyzeFailure, handleSuggestSkillUpdate,
+  handleGetContext, handleCacheClear, handleCacheStats,
+  handleImplementWithResearch, handleDependencyGraph,
+} from "./handlers/index.js";
 
 const log = new Logger("copilot-server");
 
@@ -35,27 +50,13 @@ const DB_PATH = path.join(MEMORY_PATH, "antigravity.db");
 const SKILLS_DIR = path.join(MEMORY_PATH, "prompts", "templates");
 const GENERATED_DIR = path.join(MEMORY_PATH, "prompts", "generated");
 
-// --- Helpers ---
-
-function respond(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
-}
-
-function respondError(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true,
-  };
-}
-
 // --- Server ---
 
 class CopilotServer {
   private server: Server;
   private validator: Validator;
-  private cache: CacheManager;
+  private cache!: CacheManager;
+  private db!: Database.Database;
   private contextGatherer: ContextGatherer;
   private failureAnalyzer: FailureAnalyzer;
   private loopDetector: LoopDetector;
@@ -64,11 +65,10 @@ class CopilotServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-copilot", version: "2.1.0" },
+      { name: "antigravity-copilot", version: "2.2.1" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.validator = new Validator();
-    this.cache = new CacheManager(DB_PATH);
     this.contextGatherer = new ContextGatherer(PROJECT_ROOT);
     this.failureAnalyzer = new FailureAnalyzer();
     this.loopDetector = new LoopDetector();
@@ -85,187 +85,7 @@ class CopilotServer {
   private setupHandlers() {
     // --- Tool listing ---
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: "copilot_generate_prompt",
-          description: "Build a structured AI prompt from a skill template with multi-file context injection.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              skill_file: { type: "string", description: "Skill template file (relative to .memory/prompts/templates/)" },
-              requirements: { type: "string", description: "What you need from Copilot" },
-              target_file: { type: "string", description: "File to generate code for" },
-              context_files: { type: "array", items: { type: "string" }, description: "Additional files to include as context" },
-              max_context_depth: { type: "number", description: "Import resolution depth (default: 1)" },
-            },
-            required: ["skill_file", "requirements"],
-          },
-        },
-        {
-          name: "copilot_execute",
-          description: "Save generated code to file with response caching and validation.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Generated prompt file to execute" },
-              output_file: { type: "string", description: "Where to save the result" },
-              task_id: { type: "string", description: "Unique task ID for loop detection" },
-              use_cache: { type: "boolean", description: "Use response cache (default: true)" },
-            },
-            required: ["prompt_file", "output_file"],
-          },
-        },
-        {
-          name: "copilot_validate",
-          description: "Validate generated code for security, quality, and trading patterns.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", description: "File to validate" },
-              requirements: { type: "array", items: { type: "string" }, description: "Specific requirements to check" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "copilot_score",
-          description: "Score a Copilot output for relevance, correctness, and quality.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              file: { type: "string", description: "Generated file to score" },
-              prompt_file: { type: "string", description: "Original prompt file" },
-              skill_file: { type: "string", description: "Skill file used (for effectiveness tracking)" },
-            },
-            required: ["file"],
-          },
-        },
-        {
-          name: "copilot_batch_execute",
-          description: "Execute multiple prompts with conflict detection.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompts: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    prompt_file: { type: "string" },
-                    output_file: { type: "string" },
-                    task_id: { type: "string" },
-                  },
-                  required: ["prompt_file", "output_file"],
-                },
-                description: "Array of prompt/output pairs",
-              },
-            },
-            required: ["prompts"],
-          },
-        },
-        {
-          name: "copilot_preview",
-          description: "Preview what a prompt would generate without saving. Shows enhanced diff.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Generated prompt file" },
-              target_file: { type: "string", description: "Existing file to diff against" },
-            },
-            required: ["prompt_file"],
-          },
-        },
-        // --- New v2 tools ---
-        {
-          name: "copilot_get_context",
-          description: "Gather multi-file context for a target file (imports, types, signatures, git changes).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              target_file: { type: "string", description: "File to gather context for" },
-              max_depth: { type: "number", description: "Import resolution depth (default: 1)" },
-              include_types: { type: "boolean", description: "Include type definitions (default: true)" },
-              include_git_diff: { type: "boolean", description: "Include recent git changes (default: true)" },
-            },
-            required: ["target_file"],
-          },
-        },
-        {
-          name: "copilot_cache_clear",
-          description: "Clear the response cache.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              scope: { type: "string", enum: ["all", "expired", "today"], description: "Scope of cache to clear" },
-            },
-          },
-        },
-        {
-          name: "copilot_cache_stats",
-          description: "Get cache hit/miss statistics.",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-        {
-          name: "analyze_failure",
-          description: "Analyze why a Copilot prompt failed (read-only diagnosis).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Prompt file that produced bad output" },
-              output_file: { type: "string", description: "The bad output file" },
-              validation_errors: { type: "array", items: { type: "string" }, description: "Validation errors if any" },
-              expected: { type: "string", description: "What was expected" },
-            },
-            required: ["prompt_file"],
-          },
-        },
-        {
-          name: "suggest_skill_update",
-          description: "Propose changes to a skill file based on failure analysis (requires approval).",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Failed prompt file" },
-              skill_file: { type: "string", description: "Skill file to update" },
-              output_file: { type: "string", description: "Failed output file" },
-              validation_errors: { type: "array", items: { type: "string" }, description: "Validation errors" },
-            },
-            required: ["prompt_file", "skill_file"],
-          },
-        },
-        // --- New v2.1 tools ---
-        {
-          name: "copilot_execute_and_validate",
-          description: "Execute GitHub Copilot CLI with prompt file, save output, and validate. AUTOMATICALLY runs 'gh copilot suggest' - no manual terminal commands needed. Returns validation results.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              prompt_file: { type: "string", description: "Path to prompt file (from copilot_generate_prompt)" },
-              output_file: { type: "string", description: "Where to save generated code" },
-              requirements: { type: "array", items: { type: "string" }, description: "Requirements to validate (e.g., ['Type hints', 'Handle None values'])" },
-              auto_approve_if_valid: { type: "boolean", description: "Automatically accept if validation passes (default: false)" },
-            },
-            required: ["prompt_file", "output_file"],
-          },
-        },
-        {
-          name: "implement_with_research_context",
-          description: "Complete workflow: Load research context → Generate prompt → Execute Copilot → Validate → Link to research. One tool call for research-based implementation.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {
-              research_id: { type: "string", description: "Research ID from import_research_analysis" },
-              research_section: { type: "string", description: "Specific section (e.g., 'implementation', 'findings')" },
-              specific_topic: { type: "string", description: "Optional: Specific topic from section (e.g., 'entry rules')" },
-              task_description: { type: "string", description: "What to implement (e.g., 'Bollinger Band entry signal')" },
-              file_path: { type: "string", description: "Output file path" },
-              function_signature: { type: "string", description: "Complete function signature with types" },
-              requirements: { type: "array", items: { type: "string" }, description: "Additional requirements" },
-            },
-            required: ["research_id", "task_description", "file_path"],
-          },
-        },
-      ],
+      tools: getCopilotToolDefinitions(),
     }));
 
     // --- Prompt listing ---
@@ -337,714 +157,47 @@ class CopilotServer {
     // --- Tool handler ---
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      try {
-        switch (name) {
-          case "copilot_generate_prompt": return await this.handleGeneratePrompt(args);
-          case "copilot_execute": return await this.handleExecute(args);
-          case "copilot_validate": return await this.handleValidate(args);
-          case "copilot_score": return await this.handleScore(args);
-          case "copilot_batch_execute": return await this.handleBatchExecute(args);
-          case "copilot_preview": return await this.handlePreview(args);
-          case "copilot_get_context": return await this.handleGetContext(args);
-          case "copilot_cache_clear": return await this.handleCacheClear(args);
-          case "copilot_cache_stats": return await this.handleCacheStats();
-          case "analyze_failure": return await this.handleAnalyzeFailure(args);
-          case "suggest_skill_update": return await this.handleSuggestSkillUpdate(args);
-          case "copilot_execute_and_validate": return await this.handleExecuteAndValidate(args);
-          case "implement_with_research_context": return await this.handleImplementWithResearch(args);
-          default:
-            return respondError(`Unknown tool: ${name}`);
-        }
-      } catch (error: any) {
-        return respondError(`Error: ${error.message}`);
-      }
+      return withToolHandler(log, name, async () => {
+        return await this.dispatch(name, args);
+      });
     });
   }
 
-  // =========================================================================
-  // Enhanced v1 handlers
-  // =========================================================================
-
-  private async handleGeneratePrompt(args: any) {
-    new InputValidator("copilot_generate_prompt", args)
-      .requireString("skill_file")
-      .requireString("requirements")
-      .optionalString("target_file")
-      .optionalArray("context_files")
-      .optionalNumber("max_context_depth")
-      .validate();
-
-    const skillFile: string = args.skill_file;
-    const requirements: string = args.requirements;
-    const targetFile: string | undefined = args.target_file;
-    const contextFiles: string[] = args.context_files || [];
-    const maxContextDepth: number = args.max_context_depth ?? 1;
-
-    // Load skill template
-    const skillPath = path.join(SKILLS_DIR, skillFile);
-    let skillContent: string;
-    try {
-      skillContent = await fs.readFile(skillPath, "utf-8");
-    } catch {
-      return respondError(`Skill file not found: ${skillFile}. Create it in ${SKILLS_DIR}/`);
-    }
-
-    // Build context section
-    let context = "";
-    if (targetFile) {
-      try {
-        context = await this.contextGatherer.gatherContext(targetFile, {
-          maxDepth: maxContextDepth,
-          includeTypes: true,
-          includeGitDiff: true,
-        });
-      } catch (err: any) {
-        context = `[Context gathering failed: ${err.message}]`;
-      }
-    }
-
-    // Add explicit context files
-    for (const cf of contextFiles) {
-      const cfPath = path.isAbsolute(cf) ? cf : path.join(PROJECT_ROOT, cf);
-      try {
-        const cfContent = await fs.readFile(cfPath, "utf-8");
-        context += `\n\n## Additional Context: ${path.basename(cf)}\n\`\`\`\n${cfContent.slice(0, 3000)}\n\`\`\`\n`;
-      } catch { /* skip missing */ }
-    }
-
-    // Assemble prompt
-    const timestamp = new Date().toISOString();
-    const prompt = [
-      `# Generated Prompt — ${timestamp}`,
-      `## Skill: ${skillFile}`,
-      "",
-      skillContent,
-      "",
-      "## Requirements",
-      requirements,
-      "",
-      targetFile ? `## Target File: ${targetFile}` : "",
-      context ? `## Context\n${context}` : "",
-    ].filter(Boolean).join("\n");
-
-    // Save generated prompt
-    await fs.mkdir(GENERATED_DIR, { recursive: true });
-    const promptFileName = `prompt_${Date.now()}.md`;
-    const promptPath = path.join(GENERATED_DIR, promptFileName);
-    await fs.writeFile(promptPath, prompt, "utf-8");
-
-    return respond({
-      status: "success",
-      operation: "copilot_generate_prompt",
-      summary: `Generated prompt from ${skillFile} (${prompt.length} chars)`,
-      metadata: {
-        prompt_file: path.relative(MEMORY_PATH, promptPath),
-        skill_file: skillFile,
-        prompt_length: prompt.length,
-        has_context: context.length > 0,
-        context_files: contextFiles.length,
-        target_file: targetFile || null,
-      },
-    });
-  }
-
-  private async handleExecute(args: any) {
-    new InputValidator("copilot_execute", args)
-      .requireString("prompt_file")
-      .requireString("output_file")
-      .optionalString("task_id")
-      .validate();
-
-    const promptFile: string = args.prompt_file;
-    const outputFile: string = args.output_file;
-    const taskId: string = args.task_id || `task_${Date.now()}`;
-    const useCache: boolean = args.use_cache ?? true;
-
-    // Loop detection
-    this.loopDetector.checkLoop(taskId);
-
-    // Read prompt
-    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
-    let promptContent: string;
-    try {
-      promptContent = await fs.readFile(promptPath, "utf-8");
-    } catch {
-      return respondError(`Prompt file not found: ${promptFile}`);
-    }
-
-    // Check cache
-    if (useCache) {
-      const cacheKey = this.cache.generateKey(promptContent, "");
-      const cached = this.cache.get(cacheKey);
-      if (cached) {
-        const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
-        await fs.mkdir(path.dirname(outPath), { recursive: true });
-        await fs.writeFile(outPath, cached.response, "utf-8");
-
-        return respond({
-          status: "success",
-          operation: "copilot_execute",
-          summary: `Wrote cached result to ${outputFile}`,
-          metadata: { output_file: outputFile, source: "cache", cache_key: cacheKey, hit_count: cached.hit_count },
-        });
-      }
-    }
-
-    // Save the prompt as output for the user/AI to process
-    const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
-    await fs.mkdir(path.dirname(outPath), { recursive: true });
-
-    const outputContent = [
-      `// Generated by Antigravity OS Copilot v2.0`,
-      `// Prompt: ${promptFile}`,
-      `// Task: ${taskId}`,
-      `// Timestamp: ${new Date().toISOString()}`,
-      `//`,
-      `// TODO: Process the prompt below and replace this file with generated code.`,
-      `//`,
-      `// --- PROMPT START ---`,
-      ...promptContent.split("\n").map((l) => `// ${l}`),
-      `// --- PROMPT END ---`,
-      "",
-    ].join("\n");
-
-    await fs.writeFile(outPath, outputContent, "utf-8");
-
-    // Cache the result
-    if (useCache) {
-      const cacheKey = this.cache.generateKey(promptContent, "");
-      this.cache.set(cacheKey, outputContent, { task_id: taskId, prompt_file: promptFile });
-    }
-
-    this.loopDetector.reset(taskId);
-
-    return respond({
-      status: "success",
-      operation: "copilot_execute",
-      summary: `Prompt saved to ${outputFile} for processing`,
-      metadata: {
-        output_file: outputFile,
-        prompt_file: promptFile,
-        task_id: taskId,
-        source: "generated",
-        output_length: outputContent.length,
-      },
-    });
-  }
-
-  private async handleValidate(args: any) {
-    new InputValidator("copilot_validate", args)
-      .requireString("file")
-      .optionalArray("requirements")
-      .validate();
-
-    const file: string = args.file;
-    const requirements: string[] | undefined = args.requirements;
-
-    const filePath = path.isAbsolute(file) ? file : path.join(PROJECT_ROOT, file);
-    let content: string;
-    try {
-      content = await fs.readFile(filePath, "utf-8");
-    } catch {
-      return respondError(`File not found: ${file}`);
-    }
-
-    const result = this.validator.validate(content, requirements);
-
-    return respond({
-      status: "success",
-      operation: "copilot_validate",
-      summary: result.valid
-        ? `Validation passed (security: ${result.security_score}/100, quality: ${result.quality_score}/100)`
-        : `Validation FAILED — ${result.issues.filter((i) => i.severity === "critical").length} critical issues`,
-      metadata: {
-        file,
-        valid: result.valid,
-        security_score: result.security_score,
-        quality_score: result.quality_score,
-        issues: result.issues,
-        issue_count: result.issues.length,
-        critical_count: result.issues.filter((i) => i.severity === "critical").length,
-      },
-      ...(result.issues.length > 0 ? {
-        warnings: result.issues.filter((i) => i.severity === "critical").map((i) => `Line ${i.line || "?"}: ${i.message}`),
-      } : {}),
-    });
-  }
-
-  private async handleScore(args: any) {
-    const file: string = args.file;
-    const promptFile: string | undefined = args.prompt_file;
-    const skillFile: string | undefined = args.skill_file;
-
-    const filePath = path.isAbsolute(file) ? file : path.join(PROJECT_ROOT, file);
-    let content: string;
-    try {
-      content = await fs.readFile(filePath, "utf-8");
-    } catch {
-      return respondError(`File not found: ${file}`);
-    }
-
-    // Validate for scores
-    const validation = this.validator.validate(content);
-    const lines = content.split("\n");
-    const nonEmpty = lines.filter((l) => l.trim()).length;
-    const codeLines = lines.filter((l) => l.trim() && !l.startsWith("//") && !l.startsWith("#")).length;
-
-    // Heuristic scoring
-    const relevance = Math.min(100, Math.max(20, codeLines > 5 ? 70 : 30));
-    const correctness = validation.valid ? 80 : 40;
-    const quality = validation.quality_score;
-    const security = validation.security_score;
-    const overall = Math.round((relevance + correctness + quality + security) / 4);
-
-    // Log score for skill effectiveness tracking
-    const scoreLog = path.join(MEMORY_PATH, "snapshots", "scores.jsonl");
-    const scoreEntry = {
-      timestamp: new Date().toISOString(),
-      file,
-      skill_file: skillFile || null,
-      prompt_file: promptFile || null,
-      overall,
-      relevance,
-      correctness,
-      quality,
-      security,
+  private get ctx(): CopilotContext {
+    return {
+      validator: this.validator,
+      cache: this.cache,
+      contextGatherer: this.contextGatherer,
+      failureAnalyzer: this.failureAnalyzer,
+      loopDetector: this.loopDetector,
+      cliExecutor: this.cliExecutor,
+      researchIntegration: this.researchIntegration,
+      db: this.db,
+      memoryPath: MEMORY_PATH,
+      skillsDir: SKILLS_DIR,
+      generatedDir: GENERATED_DIR,
     };
-
-    try {
-      await fs.mkdir(path.dirname(scoreLog), { recursive: true });
-      await fs.appendFile(scoreLog, JSON.stringify(scoreEntry) + "\n");
-    } catch { /* ignore */ }
-
-    return respond({
-      status: "success",
-      operation: "copilot_score",
-      summary: `Score: ${overall}/100 (R:${relevance} C:${correctness} Q:${quality} S:${security})`,
-      metadata: {
-        file,
-        overall,
-        relevance,
-        correctness,
-        quality,
-        security,
-        lines: { total: lines.length, code: codeLines, non_empty: nonEmpty },
-        skill_file: skillFile || null,
-        issues: validation.issues.length,
-      },
-    });
   }
 
-  private async handleBatchExecute(args: any) {
-    const prompts: Array<{ prompt_file: string; output_file: string; task_id?: string }> = args.prompts;
-
-    if (!prompts || prompts.length === 0) {
-      return respondError("No prompts provided");
+  private async dispatch(name: string, args: unknown) {
+    switch (name) {
+      case "copilot_generate_prompt": return await handleGeneratePrompt(this.ctx, GeneratePromptSchema.parse(args));
+      case "copilot_execute": return await handleExecute(this.ctx, ExecuteSchema.parse(args));
+      case "copilot_validate": return await handleValidate(this.ctx, ValidateSchema.parse(args));
+      case "copilot_score": return await handleScore(this.ctx, ScoreSchema.parse(args));
+      case "copilot_batch_execute": return await handleBatchExecute(this.ctx, BatchExecuteSchema.parse(args));
+      case "copilot_preview": return await handlePreview(this.ctx, PreviewSchema.parse(args));
+      case "copilot_get_context": return await handleGetContext(this.ctx, GetContextSchema.parse(args));
+      case "copilot_cache_clear": return await handleCacheClear(this.ctx, CacheClearSchema.parse(args));
+      case "copilot_cache_stats": return await handleCacheStats(this.ctx);
+      case "analyze_failure": return await handleAnalyzeFailure(this.ctx, AnalyzeFailureSchema.parse(args));
+      case "suggest_skill_update": return await handleSuggestSkillUpdate(this.ctx, SuggestSkillUpdateSchema.parse(args));
+      case "copilot_execute_and_validate": return await handleExecuteAndValidate(this.ctx, ExecuteAndValidateSchema.parse(args));
+      case "implement_with_research_context": return await handleImplementWithResearch(this.ctx, ImplementWithResearchSchema.parse(args));
+      case "copilot_dependency_graph": return await handleDependencyGraph(this.ctx, DependencyGraphSchema.parse(args));
+      default:
+        return respondError(`Unknown tool: ${name}`);
     }
-
-    // Conflict detection: check for duplicate output files
-    const outputFiles = prompts.map((p) => p.output_file);
-    const duplicates = outputFiles.filter((f, i) => outputFiles.indexOf(f) !== i);
-    if (duplicates.length > 0) {
-      return respondError(`Conflict: duplicate output files detected: ${[...new Set(duplicates)].join(", ")}`);
-    }
-
-    const results: Array<{ prompt_file: string; output_file: string; status: string; error?: string }> = [];
-
-    for (const prompt of prompts) {
-      try {
-        await this.handleExecute({
-          prompt_file: prompt.prompt_file,
-          output_file: prompt.output_file,
-          task_id: prompt.task_id || `batch_${Date.now()}_${results.length}`,
-          use_cache: true,
-        });
-        results.push({ prompt_file: prompt.prompt_file, output_file: prompt.output_file, status: "success" });
-      } catch (err: any) {
-        results.push({ prompt_file: prompt.prompt_file, output_file: prompt.output_file, status: "error", error: err.message });
-      }
-    }
-
-    const succeeded = results.filter((r) => r.status === "success").length;
-
-    return respond({
-      status: "success",
-      operation: "copilot_batch_execute",
-      summary: `Batch: ${succeeded}/${prompts.length} succeeded`,
-      metadata: { total: prompts.length, succeeded, failed: prompts.length - succeeded, results },
-    });
-  }
-
-  private async handlePreview(args: any) {
-    const promptFile: string = args.prompt_file;
-    const targetFile: string | undefined = args.target_file;
-
-    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
-    let promptContent: string;
-    try {
-      promptContent = await fs.readFile(promptPath, "utf-8");
-    } catch {
-      return respondError(`Prompt file not found: ${promptFile}`);
-    }
-
-    let existingContent = "";
-    if (targetFile) {
-      const targetPath = path.isAbsolute(targetFile) ? targetFile : path.join(PROJECT_ROOT, targetFile);
-      try {
-        existingContent = await fs.readFile(targetPath, "utf-8");
-      } catch { /* no existing file */ }
-    }
-
-    return respond({
-      status: "success",
-      operation: "copilot_preview",
-      summary: `Preview for ${promptFile}${targetFile ? ` (diff against ${targetFile})` : ""}`,
-      metadata: {
-        prompt_file: promptFile,
-        prompt_preview: promptContent.slice(0, 2000),
-        prompt_length: promptContent.length,
-        target_file: targetFile || null,
-        existing_content_length: existingContent.length,
-        has_existing: existingContent.length > 0,
-      },
-    });
-  }
-
-  // =========================================================================
-  // New v2 handlers
-  // =========================================================================
-
-  private async handleGetContext(args: any) {
-    const targetFile: string = args.target_file;
-    const maxDepth: number = args.max_depth ?? 1;
-    const includeTypes: boolean = args.include_types ?? true;
-    const includeGitDiff: boolean = args.include_git_diff ?? true;
-
-    const context = await this.contextGatherer.gatherContext(targetFile, {
-      maxDepth,
-      includeTypes,
-      includeGitDiff,
-    });
-
-    return respond({
-      status: "success",
-      operation: "copilot_get_context",
-      summary: `Context gathered for ${targetFile} (${context.length} chars)`,
-      metadata: {
-        target_file: targetFile,
-        context_length: context.length,
-        context,
-      },
-    });
-  }
-
-  private async handleCacheClear(args: any) {
-    const scope: "all" | "expired" | "today" = args?.scope || "all";
-    const result = this.cache.clear(scope);
-
-    return respond({
-      status: "success",
-      operation: "copilot_cache_clear",
-      summary: `Cleared ${result.cleared} cache entries (scope: ${scope})`,
-      metadata: { scope, cleared: result.cleared },
-    });
-  }
-
-  private async handleCacheStats() {
-    const stats = this.cache.getStats();
-
-    return respond({
-      status: "success",
-      operation: "copilot_cache_stats",
-      summary: `Cache: ${stats.total_entries} entries, ${stats.hit_rate} hit rate`,
-      metadata: stats,
-    });
-  }
-
-  private async handleAnalyzeFailure(args: any) {
-    const promptFile: string = args.prompt_file;
-    const outputFile: string | undefined = args.output_file;
-    const validationErrors: string[] | undefined = args.validation_errors;
-    const expected: string | undefined = args.expected;
-
-    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
-    const outputPath = outputFile
-      ? (path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile))
-      : undefined;
-
-    const analysis = await this.failureAnalyzer.analyze(
-      promptPath,
-      outputPath,
-      validationErrors,
-      expected
-    );
-
-    return respond({
-      status: "success",
-      operation: "analyze_failure",
-      summary: `Failure category: ${analysis.category} (confidence: ${analysis.confidence})`,
-      metadata: analysis,
-      next_steps: [
-        ...analysis.suggested_prompt_improvements.slice(0, 3),
-        "Use suggest_skill_update to propose skill file changes",
-      ],
-    });
-  }
-
-  private async handleSuggestSkillUpdate(args: any) {
-    const promptFile: string = args.prompt_file;
-    const skillFile: string = args.skill_file;
-    const outputFile: string | undefined = args.output_file;
-    const validationErrors: string[] | undefined = args.validation_errors;
-
-    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
-    const outputPath = outputFile
-      ? (path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile))
-      : undefined;
-
-    // First analyze the failure
-    const analysis = await this.failureAnalyzer.analyze(promptPath, outputPath, validationErrors);
-
-    // Then suggest skill updates
-    const skillPath = path.join(SKILLS_DIR, skillFile);
-    const suggestion = await this.failureAnalyzer.suggestSkillUpdate(analysis, skillPath);
-
-    return respond({
-      status: "success",
-      operation: "suggest_skill_update",
-      summary: `Skill update suggestion for ${skillFile} (priority: ${suggestion.priority})`,
-      metadata: {
-        analysis_category: analysis.category,
-        suggestion,
-      },
-      warnings: [
-        "This is a SUGGESTION only. Review and approve before applying changes.",
-        "Use memory_update to apply approved changes to the skill file.",
-      ],
-    });
-  }
-
-  // =========================================================================
-  // New v2.1 handlers
-  // =========================================================================
-
-  private async handleExecuteAndValidate(args: any) {
-    new InputValidator("copilot_execute_and_validate", args)
-      .requireString("prompt_file")
-      .requireString("output_file")
-      .optionalArray("requirements")
-      .validate();
-
-    const promptFile: string = args.prompt_file;
-    const outputFile: string = args.output_file;
-    const requirements: string[] = args.requirements || [];
-    const autoApprove: boolean = args.auto_approve_if_valid ?? false;
-
-    const taskId = `${promptFile}:${outputFile}`;
-
-    // Loop detection
-    this.loopDetector.checkLoop(taskId);
-
-    // Read prompt
-    const promptPath = path.isAbsolute(promptFile) ? promptFile : path.join(MEMORY_PATH, promptFile);
-    let promptContent: string;
-    try {
-      promptContent = await fs.readFile(promptPath, "utf-8");
-    } catch {
-      return respondError(`Prompt file not found: ${promptFile}`);
-    }
-
-    // Check cache
-    const cacheKey = this.cache.generateKey(promptContent, outputFile);
-    const cached = this.cache.get(cacheKey);
-    if (cached) {
-      const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
-      await fs.mkdir(path.dirname(outPath), { recursive: true });
-      await fs.writeFile(outPath, cached.response, "utf-8");
-
-      // Validate cached code
-      const validation = this.validator.validate(cached.response, requirements);
-
-      return respond({
-        status: "cached",
-        operation: "copilot_execute_and_validate",
-        summary: `Wrote cached result to ${outputFile}`,
-        metadata: {
-          output_file: outputFile,
-          source: "cache",
-          cache_key: cacheKey,
-          hit_count: cached.hit_count,
-          validation: {
-            passed: validation.valid,
-            issues: validation.issues,
-            security_score: validation.security_score,
-            quality_score: validation.quality_score,
-            recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
-          },
-        },
-      });
-    }
-
-    // Execute Copilot CLI
-    log.info("Running copilot_execute_and_validate", { prompt_file: promptFile, output_file: outputFile });
-
-    const result = await this.cliExecutor.execute(promptContent);
-
-    // Write output
-    const outPath = path.isAbsolute(outputFile) ? outputFile : path.join(PROJECT_ROOT, outputFile);
-    await fs.mkdir(path.dirname(outPath), { recursive: true });
-    await fs.writeFile(outPath, result.code, "utf-8");
-
-    // Validate
-    const validation = this.validator.validate(result.code, requirements);
-
-    // Cache if valid
-    if (validation.valid) {
-      this.cache.set(cacheKey, result.code, {
-        task_id: taskId,
-        prompt_file: promptFile,
-        source: result.source,
-      });
-      this.loopDetector.reset(taskId);
-    }
-
-    return respond({
-      status: validation.valid ? "success" : "validation_failed",
-      operation: "copilot_execute_and_validate",
-      summary: validation.valid
-        ? `Generated and validated ${outputFile} (${result.lines_generated} lines)`
-        : `Generated ${outputFile} but validation FAILED`,
-      metadata: {
-        output_file: outputFile,
-        prompt_file: promptFile,
-        source: result.source,
-        lines_generated: result.lines_generated,
-        execution_time_ms: result.execution_time_ms,
-        validation: {
-          passed: validation.valid,
-          issues: validation.issues,
-          security_score: validation.security_score,
-          quality_score: validation.quality_score,
-          recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
-        },
-        preview: result.code.slice(0, 300) + (result.code.length > 300 ? "..." : ""),
-        auto_approved: autoApprove && validation.valid,
-      },
-    });
-  }
-
-  private async handleImplementWithResearch(args: any) {
-    new InputValidator("implement_with_research_context", args)
-      .requireString("research_id")
-      .requireString("task_description")
-      .requireString("file_path")
-      .optionalString("research_section")
-      .optionalString("specific_topic")
-      .optionalString("function_signature")
-      .optionalArray("requirements")
-      .validate();
-
-    const researchId: string = args.research_id;
-    const taskDescription: string = args.task_description;
-    const filePath: string = args.file_path;
-    const researchSection: string | undefined = args.research_section;
-    const specificTopic: string | undefined = args.specific_topic;
-    const functionSignature: string | undefined = args.function_signature;
-    const requirements: string[] = args.requirements || [];
-
-    const steps: Array<{ step: string; [key: string]: unknown }> = [];
-
-    // Step 1: Get research context
-    let researchContext;
-    try {
-      researchContext = await this.researchIntegration.getResearchContext({
-        research_id: researchId,
-        sections: researchSection ? [researchSection] : undefined,
-        specific_topic: specificTopic,
-      });
-      steps.push({ step: "research_loaded", sections: Object.keys(researchContext.content) });
-    } catch (error: any) {
-      return respondError(`Failed to load research ${researchId}: ${error.message}`);
-    }
-
-    // Step 2: Build prompt with research context
-    const researchPrompt = this.researchIntegration.buildResearchPromptSection(researchContext);
-    const additionalContext = await this.researchIntegration.getAdditionalContext();
-
-    const promptParts = [
-      `# Implementation Task`,
-      `## Task: ${taskDescription}`,
-      "",
-      functionSignature ? `## Function Signature\n\`\`\`\n${functionSignature}\n\`\`\`\n` : "",
-      requirements.length > 0 ? `## Requirements\n${requirements.map((r) => `- ${r}`).join("\n")}\n` : "",
-      researchPrompt,
-      additionalContext.tech_stack ? `## Tech Stack\n${additionalContext.tech_stack.slice(0, 2000)}\n` : "",
-      additionalContext.lessons ? `## Relevant Lessons\n${additionalContext.lessons.slice(0, 1000)}\n` : "",
-    ].filter(Boolean).join("\n");
-
-    // Save prompt
-    await fs.mkdir(GENERATED_DIR, { recursive: true });
-    const promptFileName = `prompt_research_${Date.now()}.md`;
-    const promptPath = path.join(GENERATED_DIR, promptFileName);
-    await fs.writeFile(promptPath, promptParts, "utf-8");
-    steps.push({ step: "prompt_generated", file: path.relative(MEMORY_PATH, promptPath) });
-
-    // Step 3: Execute and validate
-    const executionResult = await this.cliExecutor.execute(promptParts);
-
-    const outPath = path.isAbsolute(filePath) ? filePath : path.join(PROJECT_ROOT, filePath);
-    await fs.mkdir(path.dirname(outPath), { recursive: true });
-    await fs.writeFile(outPath, executionResult.code, "utf-8");
-
-    const validation = this.validator.validate(executionResult.code, requirements);
-    steps.push({
-      step: "executed",
-      source: executionResult.source,
-      lines: executionResult.lines_generated,
-      validation_passed: validation.valid,
-    });
-
-    // Step 4: Link to research if valid
-    if (validation.valid) {
-      await this.researchIntegration.addResearchLink(outPath, researchId, researchContext.title);
-      steps.push({ step: "linked_to_research" });
-
-      // Cache the result
-      const cacheKey = this.cache.generateKey(promptParts, filePath);
-      this.cache.set(cacheKey, executionResult.code, {
-        research_id: researchId,
-        source: executionResult.source,
-      });
-    }
-
-    return respond({
-      status: validation.valid ? "complete" : "needs_review",
-      operation: "implement_with_research_context",
-      summary: validation.valid
-        ? `Implemented "${taskDescription}" using research "${researchContext.title}" (${executionResult.lines_generated} lines)`
-        : `Generated code needs review for "${taskDescription}"`,
-      metadata: {
-        file: filePath,
-        research: {
-          id: researchId,
-          title: researchContext.title,
-          source: researchContext.source,
-        },
-        validation: {
-          passed: validation.valid,
-          issues: validation.issues,
-          security_score: validation.security_score,
-          quality_score: validation.quality_score,
-          recommendation: validation.valid ? "APPROVE" : "REVIEW_REQUIRED",
-        },
-        execution: {
-          source: executionResult.source,
-          lines_generated: executionResult.lines_generated,
-          execution_time_ms: executionResult.execution_time_ms,
-        },
-        steps,
-      },
-    });
   }
 
   // =========================================================================
@@ -1055,10 +208,29 @@ class CopilotServer {
     // Ensure required directories
     await fs.mkdir(SKILLS_DIR, { recursive: true });
     await fs.mkdir(GENERATED_DIR, { recursive: true });
+    await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+
+    this.cache = new CacheManager(DB_PATH);
+    this.db = getConnection(DB_PATH);
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        file TEXT NOT NULL,
+        skill_file TEXT,
+        prompt_file TEXT,
+        overall INTEGER NOT NULL,
+        relevance INTEGER NOT NULL,
+        correctness INTEGER NOT NULL,
+        quality INTEGER NOT NULL,
+        security INTEGER NOT NULL
+      );
+    `);
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    log.info("Running on stdio", { tools: 13, prompts: 2, version: "2.1.0" });
+    log.info("Running on stdio", { tools: 14, prompts: 2, version: "2.2.0" });
   }
 }
 

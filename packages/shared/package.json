@@ -1,6 +1,6 @@
 {
   "name": "@antigravity-os/shared",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "type": "module",
   "description": "Shared definitions for Antigravity OS MCP servers",
   "main": "./build/index.js",
@@ -12,5 +12,10 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^11.10.0",
+    "zod": "^4.3.6"
   }
 }

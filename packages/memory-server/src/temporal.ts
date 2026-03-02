@@ -433,6 +433,56 @@ export class TemporalMemory {
   }
 
   /**
+   * Atomically resolves a contradiction: archives one entry, validates the other,
+   * marks the contradiction as resolved, and logs the operation.
+   * All steps execute in a single SQLite transaction.
+   */
+  resolveContradiction(
+    keepId: string,
+    archiveId: string,
+    rationale: string,
+  ): { kept: MemoryEntry; archived_id: string; new_confidence: number; status: ConfidenceStatus } {
+    const kept = this.getEntry(keepId);
+    if (!kept) throw new Error(`Entry to keep not found: ${keepId}`);
+    const toArchive = this.getEntry(archiveId);
+    if (!toArchive) throw new Error(`Entry to archive not found: ${archiveId}`);
+
+    const txn = this.db.transaction(() => {
+      // 1. Archive the losing entry
+      this.db.prepare(`DELETE FROM memory_entries WHERE id = ?`).run(archiveId);
+
+      // 2. Validate (boost) the winning entry
+      kept.validation_count += 1;
+      kept.last_validated = new Date().toISOString();
+      const newConfidence = this.calculateConfidence(kept);
+      this.db.prepare(
+        `UPDATE memory_entries SET validation_count = ?, last_validated = ?, confidence = ? WHERE id = ?`
+      ).run(kept.validation_count, kept.last_validated, newConfidence, keepId);
+
+      // 3. Mark all contradictions between these two entries as resolved
+      this.db.prepare(
+        `UPDATE contradictions SET resolved = 1, resolution = ? WHERE
+         (entry1_id = ? AND entry2_id = ?) OR (entry1_id = ? AND entry2_id = ?)`
+      ).run(rationale, keepId, archiveId, archiveId, keepId);
+
+      // 4. Log the operation
+      this.logOperation(
+        'resolve_contradiction',
+        kept.file,
+        undefined,
+        keepId,
+        `Kept ${keepId}, archived ${archiveId}. Rationale: ${rationale}`
+      );
+
+      return { newConfidence, status: this.getConfidenceStatus(newConfidence) };
+    });
+
+    const { newConfidence, status } = txn();
+    kept.confidence = newConfidence;
+    return { kept, archived_id: archiveId, new_confidence: newConfidence, status };
+  }
+
+  /**
    * Archives (deletes) entries by their ids and returns the count of archived entries.
    */
   archiveEntries(ids: string[]): { archived: number } {
@@ -585,6 +635,11 @@ export class TemporalMemory {
    * Converts a raw database row into a typed MemoryEntry, parsing JSON fields.
    */
   private rowToEntry(row: Record<string, unknown>): MemoryEntry {
+    let tags: string[] = [];
+    let related: string[] = [];
+    try { tags = JSON.parse((row.tags as string) || '[]'); } catch { tags = []; }
+    try { related = JSON.parse((row.related_entries as string) || '[]'); } catch { related = []; }
+
     return {
       id: row.id as string,
       content: row.content as string,
@@ -596,8 +651,8 @@ export class TemporalMemory {
       last_validated: row.last_validated as string,
       validation_count: row.validation_count as number,
       contradiction_count: row.contradiction_count as number,
-      tags: JSON.parse((row.tags as string) || '[]'),
-      related_entries: JSON.parse((row.related_entries as string) || '[]'),
+      tags,
+      related_entries: related,
     };
   }
 

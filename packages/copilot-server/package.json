@@ -1,6 +1,6 @@
 {
   "name": "@antigravity-os/copilot-server",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "type": "module",
   "description": "MCP server for Copilot CLI orchestration - prompt generation, validation, and batch execution",
   "bin": {
@@ -11,9 +11,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@antigravity-os/shared": "2.1.0",
+    "@antigravity-os/shared": "*",
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^11.0.0",
+    "ts-morph": "^27.0.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
