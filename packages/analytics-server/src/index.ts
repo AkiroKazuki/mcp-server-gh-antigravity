@@ -57,7 +57,7 @@ class AnalyticsServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-analytics", version: "2.1.0" },
+      { name: "antigravity-analytics", version: "2.2.1" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.budget = new BudgetEnforcer(PROJECT_ROOT);

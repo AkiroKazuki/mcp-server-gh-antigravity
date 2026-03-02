@@ -96,7 +96,7 @@ class MemoryServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-memory", version: "2.1.0" },
+      { name: "antigravity-memory", version: "2.2.1" },
       { capabilities: { tools: {} } }
     );
     this.lockManager = new FileLockManager();

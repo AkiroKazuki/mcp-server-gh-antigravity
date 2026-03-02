@@ -65,7 +65,7 @@ class CopilotServer {
 
   constructor() {
     this.server = new Server(
-      { name: "antigravity-copilot", version: "2.1.0" },
+      { name: "antigravity-copilot", version: "2.2.1" },
       { capabilities: { tools: {}, prompts: {} } }
     );
     this.validator = new Validator();

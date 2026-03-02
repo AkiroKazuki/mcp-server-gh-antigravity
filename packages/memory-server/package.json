@@ -1,6 +1,6 @@
 {
   "name": "@antigravity-os/memory-server",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "type": "module",
   "description": "MCP server for managing .memory/ knowledge base with semantic search, git persistence, and file locking",
   "bin": {

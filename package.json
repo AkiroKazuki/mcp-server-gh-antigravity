@@ -1,8 +1,8 @@
 {
   "name": "antigravity-os-mcp",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "private": true,
-  "description": "Antigravity OS v2.1 - MCP Server System with Temporal Memory and Intelligence Layer",
+  "description": "Antigravity OS — MCP Server System with Temporal Memory, Semantic Search, and AI Analytics",
   "author": "AkiroKazuki",
   "license": "MIT",
   "repository": {

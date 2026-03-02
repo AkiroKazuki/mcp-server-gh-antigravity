@@ -1,4 +1,4 @@
-# Setup Guide — Antigravity OS v2.1 MCP Servers (macOS)
+# Setup Guide — Antigravity OS MCP Servers
 
 ## Prerequisites
 
@@ -313,9 +313,13 @@ If any step fails, check the Troubleshooting section above.
 
 ## Budget Override
 
-When you hit a budget limit mid-task, the `check_budget` tool will block further operations. To temporarily override:
+When you hit a budget limit mid-task, the `check_budget` tool will block further operations. You can use the `set_budget_override` tool to temporarily increase limits:
 
-Edit `.memory/config/budget.json`:
+```
+set_budget_override(reason="critical refactoring", multiplier=2.0, duration_hours=4)
+```
+
+Alternatively, edit `.memory/config/budget.json` directly:
 
 ```json
 {

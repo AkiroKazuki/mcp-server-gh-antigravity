@@ -1,6 +1,6 @@
 {
   "name": "@antigravity-os/analytics-server",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "type": "module",
   "description": "MCP server for cost tracking, performance analytics, and budget enforcement",
   "bin": {

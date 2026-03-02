@@ -100,6 +100,21 @@ Please include:
 - Use explicit return types for functions
 - Avoid `any` type - use `unknown` if type is truly unknown
 
+### Adding a New Tool
+
+Every new tool requires these 6 steps:
+
+1. **Schema** (`schemas.ts`): Add a Zod schema, inferred type, and tool definition entry
+2. **Handler** (`handlers/<file>.ts`): A plain `async function handleXxx(ctx, args)` — no try/catch (the wrapper handles that)
+3. **Barrel export** (`handlers/index.ts`): Export the new handler
+4. **Dispatch** (`index.ts`): Add a `case` in the `dispatch()` switch
+5. **Tool count**: Update the `log.info("Running on stdio", { tools: N })` call
+6. **Docs**: Update README.md, SETUP.md, and CHANGELOG.md
+
+### Database Access
+
+Use `getConnection(dbPath)` from `@antigravity-os/shared` — never `new Database()` directly.
+
 ### Code Style
 
 - Use 2 spaces for indentation
@@ -139,14 +154,17 @@ Please include:
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all unit tests (Vitest)
 npm test
 
 # Run tests for specific package
-npm test -w @antigravity-os/memory-server
+npx vitest run packages/memory-server/src/temporal.test.ts
+
+# Run smoke tests (verifies all servers start correctly)
+node test-all.mjs
 
 # Watch mode
-npm run dev -w @antigravity-os/memory-server
+npm run test:watch
 ```
 
 ### Writing Tests

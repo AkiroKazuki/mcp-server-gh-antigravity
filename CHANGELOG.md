@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.2.1
+
+Stability and security patch. Fixes all critical audit findings and resolves npm vulnerability alerts.
+
+### Bug Fixes
+
+- **Dependency graph**: Fixed infinite recursion on circular imports (added visited set)
+- **AST extractor**: Fixed memory leak — source files are now removed after extraction
+- **Semantic reindex**: Atomic transaction prevents data loss if indexing fails midway
+- **Staging area**: `finally` block ensures staging is cleared even on partial failure
+- **CLI executor**: Temp file cleanup moved to `finally` block (no more leaked files)
+- **Research metadata**: File locking prevents race conditions on concurrent writes
+- **Database manager**: Guard against negative ref counts; WAL pragma failure no longer leaks connections
+- **Lock manager**: Resolve lock promise on release (fixes potential deadlocks)
+- **Temporal memory**: Safe JSON.parse in `rowToEntry` with fallback to `[]` on corrupt data
+- **Health monitor**: Bounds check on `df` output parsing prevents NaN
+- **Budget enforcer**: Cost log queries now filter in SQL instead of loading all rows
+- **Error handling**: Replaced `catch (error: any)` with `catch (error: unknown)` across all servers
+
+### Security
+
+- Upgraded `glob` 10.5 → 13.0.6 (resolves minimatch ReDoS CVEs)
+- Upgraded `hono` and `minimatch` to patched versions
+- `npm audit` reports 0 vulnerabilities
+
+### Housekeeping
+
+- Removed unused imports (`parseJsonl`, `Database` type)
+- Added `FileLockManager` to analytics server context
+- Added try-catch around analytics export queries
+
 ## v2.2.0
 
 Stability, autonomy & architecture upgrade: **54 tools + 4 prompts**. Fixes critical concurrency issues, extracts handler architecture, adds autonomous code remediation, external knowledge ingestion, and infrastructure hardening.

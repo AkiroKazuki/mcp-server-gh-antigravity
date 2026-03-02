@@ -23,7 +23,7 @@ export async function handleSnapshot(ctx: MemoryContext, args: MemorySnapshotArg
   const snapshot: Record<string, any> = {
     created_at: new Date().toISOString(),
     tag: tag || null,
-    version: "2.1.0",
+    version: "2.2.1",
     files: {},
     confidence_data: {},
   };

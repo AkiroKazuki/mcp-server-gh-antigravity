@@ -8,7 +8,7 @@ export async function handleExportAnalytics(ctx: AnalyticsContext, args: ExportA
   const include = args.include ?? ["costs", "performance", "scores", "health"];
   const exportData: Record<string, any> = {
     exported_at: new Date().toISOString(),
-    version: "2.1.0",
+    version: "2.2.1",
   };
 
   if (include.includes("costs")) {
