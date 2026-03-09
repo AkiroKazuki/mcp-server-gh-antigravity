@@ -10,7 +10,7 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.3.5",
     "typescript": "^5.3.3"
   },
   "dependencies": {
