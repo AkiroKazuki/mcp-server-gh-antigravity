@@ -14,14 +14,14 @@
     "@antigravity-os/shared": "*",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@xenova/transformers": "^2.17.2",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.8.0",
     "glob": "^13.0.6",
     "node-html-markdown": "^2.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.5.0",
     "typescript": "^5.3.3"
   }
 }
